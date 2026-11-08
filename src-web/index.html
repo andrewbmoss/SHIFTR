@@ -48,6 +48,7 @@
                 service.innerHTML = response.service_status;
                 dircon.innerHTML = response.dircon_status;
                 mode.innerHTML = response.mode;
+                document.getElementById('trainer_protocol').innerHTML = response.trainer_protocol;
                 freeheap.innerHTML = response.free_heap;
                 statusContainer.style = '';
             })
@@ -59,12 +60,36 @@
 
     }
 
+    function setText(id, value) {
+        document.getElementById(id).innerHTML = value;
+    }
+
+    function updateLive() {
+        fetch('/live', { method: 'GET', cache: 'no-store', headers: { 'Accept': 'application/json' } })
+            .then(response => response.json())
+            .then(live => {
+                setText('live_trainer', live.trainer_connected ? (live.trainer_name + ' via ' + live.protocol + (live.protocol == 'FTMS' ? (live.control ? ' (control granted)' : ' (no control yet)') : '')) : 'Not connected');
+                setText('live_power', live.power + ' W');
+                setText('live_cadence', live.cadence + ' rpm <small>(' + live.cadence_source + ')</small>');
+                setText('live_speed', live.speed_kph.toFixed(1) + ' km/h');
+                setText('live_zwift', live.zwift_clients > 0 ? (live.zwift_mode + ', ' + live.zwift_clients + ' connection(s)') : 'Not connected');
+                setText('live_gear', live.virtual_gear > 0 ? (live.virtual_gear + ' / 24 <small>(ratio ' + live.gear_ratio.toFixed(2) + ')</small>') : '-');
+                setText('live_grade', live.zwift_grade.toFixed(1) + ' %');
+                setText('live_command', live.trainer_command);
+                setText('live_blocked', live.blocked_writes);
+                document.getElementById('live_container').style = '';
+            })
+            .catch(reason => {})
+            .finally(setTimeout(updateLive, 1000));
+    }
+
     function setup() {
         let settings = document.getElementById('settings_btn');
         settings.onclick = function () { location.href = '/settings'; };
         let firmware = document.getElementById('firmware_btn');
         firmware.onclick = function () { location.href = '/firmware'; };
         updateStatus();
+        updateLive();
     }
 </script>
 
@@ -83,6 +108,22 @@
     </div>
     <div class="container" id="connection_container">
         <div id="connection_status" class="statusgreen">Connected</div>
+    </div>
+    <div class="container" id="live_container" style="display: none">
+        <h1>Ride</h1>
+        <div class="form">
+            <div>
+                <div class="form-control"><label>Trainer:</label><span id="live_trainer"></span></div>
+                <div class="form-control"><label>Power:</label><span id="live_power"></span></div>
+                <div class="form-control"><label>Cadence:</label><span id="live_cadence"></span></div>
+                <div class="form-control"><label>Speed:</label><span id="live_speed"></span></div>
+                <div class="form-control"><label>Zwift:</label><span id="live_zwift"></span></div>
+                <div class="form-control"><label>Virtual gear:</label><span id="live_gear"></span></div>
+                <div class="form-control"><label>Zwift grade:</label><span id="live_grade"></span></div>
+                <div class="form-control"><label>Sent to trainer:</label><span id="live_command"></span></div>
+                <div class="form-control"><label>Blocked writes:</label><span id="live_blocked"></span></div>
+            </div>
+        </div>
     </div>
     <div class="container" id="status_container" style="display: none">
         <h1>Status</h1>
@@ -111,6 +152,10 @@
                 <div class="form-control">
                     <label>DirCon:</label>
                     <span id="dircon"></span>
+                </div>
+                <div class="form-control">
+                    <label>Trainer protocol:</label>
+                    <span id="trainer_protocol"></span>
                 </div>
                 <div class="form-control">
                     <label>Mode:</label>

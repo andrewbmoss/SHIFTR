@@ -3,7 +3,7 @@
 
 // IoTWebConf configuration
 // identifier for EEPROM storage
-#define WIFI_CONFIG_VERSION "init"
+#define WIFI_CONFIG_VERSION "srs1"
 // when CONFIG_PIN is pulled to ground on startup, the device will use the initial password to build an AP
 #define WIFI_CONFIG_PIN IO12
 // status indicator pin, first it will light up (kept LOW), on Wifi connection it will blink, when connected to the Wifi it will turn off (kept HIGH)
@@ -13,6 +13,7 @@
 #include <IotWebConf.h>
 #include <IotWebConfUsing.h>
 #include <map>
+#include <TrainerControl.h>
 
 typedef enum VirtualShiftingMode {
   BASIC_RESISTANCE = 0,
@@ -43,6 +44,9 @@ class SettingsManager {
   static std::string getAPPassword();
   static bool isFTMSEnabled();
   static void setFTMSEnabled(bool enabled);
+  static TrainerProtocolPreference getTrainerProtocolPreference();
+  static void setTrainerProtocolPreference(TrainerProtocolPreference preference);
+  static std::map<size_t, std::string> getTrainerProtocolPreferences();
 
  private:
   static char iotWebConfChainringTeethParameterValue[];
@@ -55,6 +59,9 @@ class SettingsManager {
   static char iotWebConfGradeSmoothingParameterValue[];
   static char iotWebConfDifficultyParameterValue[];
   static char iotWebConfFTMSParameterValue[];
+  static char iotWebConfTrainerProtocolParameterValue[];
+  static char iotWebConfTrainerProtocolValues[][16];
+  static char iotWebConfTrainerProtocolNames[][16];
   static IotWebConfParameterGroup iotWebConfSettingsGroup;
   static IotWebConfNumberParameter iotWebConfChainringTeethParameter;
   static IotWebConfNumberParameter iotWebConfSprocketTeethParameter;
@@ -64,6 +71,7 @@ class SettingsManager {
   static IotWebConfCheckboxParameter iotWebConfGradeSmoothingParameter;
   static IotWebConfNumberParameter iotWebConfDifficultyParameter;
   static IotWebConfCheckboxParameter iotWebConfFTMSParameter;
+  static IotWebConfSelectParameter iotWebConfTrainerProtocolParameter;
   static IotWebConf* iotWebConf;
 };
 

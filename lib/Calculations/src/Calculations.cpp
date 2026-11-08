@@ -122,27 +122,8 @@ uint8_t Calculations::calculateFECBasicResistancePercentageValue(double totalWei
  * @return FE-C resistance grade in 0.01% (0x4E20 = 0%)
  */
 uint16_t Calculations::calculateFECTrackResistanceGrade(double totalWeight, double grade, double measuredSpeed, uint8_t cadence, double gearRatio, double defaultGearRatio, uint16_t difficulty) {
-  uint16_t trackResistanceGrade = 0x4E20;
-  
-  // calculate the speed and realSpeed based on cadence, wheel diameter and gear ratio
-  double speed = calculateSpeed(cadence, wheelDiameter, gearRatio);
-  double realSpeed = calculateSpeed(cadence, wheelDiameter, defaultGearRatio);
-
-  // calculate the wind resistance (including difficulty) based on realSpeed
-  double windResistance = calculateWindResistance(realSpeed, 0);
-  windResistance = windResistance * (difficulty / 100.0);
-
-  // calculate the rolling resistance
-  double rollingResistance = calculateRollingResistance(totalWeight);
-
-  // calculate the geared total resistance
-  double gearedTotalResistance = calculateGearedResistance(totalWeight, grade, speed, gearRatio, defaultGearRatio, difficulty);
-
-  // calculate the geared grade based on the theoretical gravitational resistance
-  double theoreticalGravitationalResistance = gearedTotalResistance - windResistance - rollingResistance;
-  double calculatedGrade = (tan(asin(theoreticalGravitationalResistance / totalWeight / gravity)) * 100) - 1;
-
-  trackResistanceGrade += (calculatedGrade * 100);
+  double calculatedGrade = calculateGearedGrade(totalWeight, grade, cadence, gearRatio, defaultGearRatio, difficulty);
+  uint16_t trackResistanceGrade = (uint16_t)(0x4E20 + round(calculatedGrade * 100));
   log_d("FE-C Track resistance grade: %d (%f%)", trackResistanceGrade, calculatedGrade);
   return trackResistanceGrade;
 }
@@ -160,21 +141,8 @@ uint16_t Calculations::calculateFECTrackResistanceGrade(double totalWeight, doub
  * @return FE-C target power value in 0.25W (0x00 = 0W)
  */
 uint16_t Calculations::calculateFECTargetPowerValue(double totalWeight, double grade, double measuredSpeed, uint8_t cadence, double gearRatio, double defaultGearRatio, uint16_t difficulty) {
-  uint16_t targetPowerValue = 0;
-
-  // calculate the speed based on cadence, wheel diameter and gear ratio
-  double speed = calculateSpeed(cadence, wheelDiameter, gearRatio);
-  double trainerSpeed = calculateSpeed(cadence, wheelDiameter, defaultGearRatio);
-
-  // calculate the geared total resistance
-  double gearedTotalResistance = calculateGearedResistance(totalWeight, grade, speed, gearRatio, defaultGearRatio, difficulty);
-
-  // calculate the power based on the total resistance and speed
-  double power = gearedTotalResistance * trainerSpeed;
-  if (power < 0) {
-    power = 0;
-  }
-  targetPowerValue = round(power * 4);
+  double power = calculateGearedPower(totalWeight, grade, cadence, gearRatio, defaultGearRatio, difficulty);
+  uint16_t targetPowerValue = round(power * 4);
   log_d("FE-C Target power value: %d (%fW)", targetPowerValue, power);
   return targetPowerValue;
 }
@@ -187,7 +155,7 @@ uint16_t Calculations::calculateFECTargetPowerValue(double totalWeight, double g
  * @param gearRatio Gear ratio
  * @return Speed in m/s
  */
-double Calculations::calculateSpeed(uint8_t cadence, double wheelDiameter, double gearRatio) {
+double Calculations::calculateSpeed(double cadence, double wheelDiameter, double gearRatio) {
   return ((cadence * gearRatio) * (wheelDiameter * pi) / 60);
 }
 
@@ -218,4 +186,78 @@ double Calculations::calculateRelativeGearRatio(double gearRatio, double default
   double relativeGearRatio = gearRatio / defaultGearRatio;
   log_d("Relative gear ratio: %f (%f / %f)", relativeGearRatio, gearRatio, defaultGearRatio);
   return relativeGearRatio;
+}
+/**
+ * Calculates the grade that has to be simulated on the trainer so that the
+ * real (fixed) gear feels like the requested virtual gear.
+ *
+ * @return Grade in percent, clamped to [-40, 40]
+ */
+double Calculations::calculateGearedGrade(double totalWeight, double grade, double cadence, double gearRatio, double defaultGearRatio, uint16_t difficulty) {
+  // speed in the virtual gear and in the real gear
+  double speed = calculateSpeed(cadence, wheelDiameter, gearRatio);
+  double realSpeed = calculateSpeed(cadence, wheelDiameter, defaultGearRatio);
+
+  // the trainer adds rolling and wind resistance itself, so remove them again
+  double windResistance = calculateWindResistance(realSpeed, 0) * (difficulty / 100.0);
+  double rollingResistance = calculateRollingResistance(totalWeight);
+  double gearedTotalResistance = calculateGearedResistance(totalWeight, grade, speed, gearRatio, defaultGearRatio, difficulty);
+  double theoreticalGravitationalResistance = gearedTotalResistance - windResistance - rollingResistance;
+
+  double sine = theoreticalGravitationalResistance / totalWeight / gravity;
+  if (sine > 0.99) sine = 0.99;
+  if (sine < -0.99) sine = -0.99;
+  double calculatedGrade = (tan(asin(sine)) * 100) - 1;
+  if (std::isnan(calculatedGrade)) calculatedGrade = 0;
+  if (calculatedGrade > 40) calculatedGrade = 40;
+  if (calculatedGrade < -40) calculatedGrade = -40;
+  log_d("Geared grade: %f%% (requested %f%%)", calculatedGrade, grade);
+  return calculatedGrade;
+}
+
+/**
+ * Calculates the power the rider would need in the virtual gear at the current cadence.
+ *
+ * @return Power in W (>= 0)
+ */
+double Calculations::calculateGearedPower(double totalWeight, double grade, double cadence, double gearRatio, double defaultGearRatio, uint16_t difficulty) {
+  double speed = calculateSpeed(cadence, wheelDiameter, gearRatio);
+  double trainerSpeed = calculateSpeed(cadence, wheelDiameter, defaultGearRatio);
+  double gearedTotalResistance = calculateGearedResistance(totalWeight, grade, speed, gearRatio, defaultGearRatio, difficulty);
+  double power = gearedTotalResistance * trainerSpeed;
+  if (power < 0 || std::isnan(power)) {
+    power = 0;
+  }
+  return power;
+}
+
+/**
+ * Calculates the resistance percentage (0..100) of the trainer's maximum resistance.
+ * If the maximum resistance is unknown (0) a default of 200N is assumed.
+ */
+double Calculations::calculateGearedResistancePercentage(double totalWeight, double grade, double cadence, double gearRatio, double defaultGearRatio, uint16_t maximumResistance, uint16_t difficulty) {
+  if (maximumResistance == 0) {
+    maximumResistance = 200;
+  }
+  double speed = calculateSpeed(cadence, wheelDiameter, gearRatio);
+  double gearedTotalResistance = calculateGearedResistance(totalWeight, grade, speed, gearRatio, defaultGearRatio, difficulty);
+  double percentage = gearedTotalResistance / maximumResistance * 100.0;
+  if (percentage < 0 || std::isnan(percentage)) percentage = 0;
+  if (percentage > 100) percentage = 100;
+  return percentage;
+}
+
+/**
+ * Estimates the cadence from the trainer's wheel speed. With a Zwift Cog the
+ * physical gear never changes, so flywheel speed is proportional to cadence.
+ *
+ * @param speed Trainer speed in m/s
+ * @param gearRatio Physical gear ratio (chainring / sprocket)
+ * @return Cadence in RPM
+ */
+double Calculations::estimateCadenceFromSpeed(double speed, double gearRatio, double wheelDiameterMeters) {
+  if (speed <= 0 || gearRatio <= 0 || wheelDiameterMeters <= 0) {
+    return 0;
+  }
+  return speed * 60.0 / (gearRatio * wheelDiameterMeters * pi);
 }

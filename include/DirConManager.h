@@ -28,6 +28,12 @@ class DirConManager {
   static void notifyDirConCharacteristic(const NimBLEUUID& characteristicUUID, uint8_t* pData, size_t length);
   static String getStatusMessage();
   static TrainerMode getZwiftTrainerMode();
+  static double getZwiftGradePercent();
+  static double getZwiftGearRatio();
+  static int getVirtualGear();
+  static size_t getConnectedClientCount();
+  static uint32_t getBlockedPassthroughWrites();
+  static double getDefaultGearRatio();
 
  private:
   friend class DirConServiceManagerCallbacks;
@@ -51,6 +57,7 @@ class DirConManager {
   static void updateStatusMessage();
   static void resetValues();
   static void updateSIMModeResistance();
+  static bool isTrainerControlCharacteristic(const NimBLEUUID& characteristicUUID);
   static std::vector<uint8_t> processFTMSReadRequest(Service* service, Characteristic* characteristic, std::vector<uint8_t>* requestData); 
   static std::vector<uint8_t> processFTMSWriteRequest(Service* service, Characteristic* characteristic, std::vector<uint8_t>* requestData);
   static std::vector<uint8_t> generateIndoorBikeDataNotificationData(uint16_t instantaneousSpeed, uint16_t instantaneousCadence, int16_t instantaneousPower);
@@ -76,10 +83,8 @@ class DirConManager {
 
   static int64_t smoothedZwiftGrade;
 
-  static uint16_t trainerInstantaneousPower;
-  static uint16_t trainerInstantaneousSpeed;
-  static uint8_t trainerCadence;
-  static uint16_t trainerMaximumResistance;
+  static bool zwiftProtocolActive;
+  static uint32_t blockedPassthroughWrites;
 
   static uint16_t difficulty;
 

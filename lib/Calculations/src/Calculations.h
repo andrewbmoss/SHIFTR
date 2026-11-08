@@ -14,9 +14,13 @@ class Calculations {
   static uint8_t calculateFECBasicResistancePercentageValue(double totalWeight, double grade, double measuredSpeed, uint8_t cadence, double gearRatio, double defaultGearRatio, uint16_t maximumResistance, uint16_t difficulty);
   static uint16_t calculateFECTrackResistanceGrade(double totalWeight, double grade, double measuredSpeed, uint8_t cadence, double gearRatio, double defaultGearRatio, uint16_t difficulty);
   static uint16_t calculateFECTargetPowerValue(double totalWeight, double grade, double measuredSpeed, uint8_t cadence, double gearRatio, double defaultGearRatio, uint16_t difficulty);
-  static double calculateSpeed(uint8_t cadence, double wheelDiameter, double gearRatio);
+  static double calculateSpeed(double cadence, double wheelDiameter, double gearRatio);
   static double calculateGearedValue(double originalValue, double gearRatio);
   static double calculateRelativeGearRatio(double gearRatio, double defaultGearRatio);
+  static double calculateGearedGrade(double totalWeight, double grade, double cadence, double gearRatio, double defaultGearRatio, uint16_t difficulty);
+  static double calculateGearedPower(double totalWeight, double grade, double cadence, double gearRatio, double defaultGearRatio, uint16_t difficulty);
+  static double calculateGearedResistancePercentage(double totalWeight, double grade, double cadence, double gearRatio, double defaultGearRatio, uint16_t maximumResistance, uint16_t difficulty);
+  static double estimateCadenceFromSpeed(double speed, double gearRatio, double wheelDiameterMeters);
 
   static double const pi;
   static double const gravity;

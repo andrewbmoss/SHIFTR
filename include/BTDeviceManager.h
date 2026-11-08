@@ -18,13 +18,12 @@ class BTDeviceManager {
   static bool isConnected();
   static bool isStarted();
   static std::string getConnecedDeviceName();
-  static bool writeBLECharacteristic(const NimBLEUUID& serviceUUID, const NimBLEUUID& characteristicUUID, std::vector<uint8_t>* data);
+  static bool writeBLECharacteristic(const NimBLEUUID& serviceUUID, const NimBLEUUID& characteristicUUID, std::vector<uint8_t>* data, bool withResponse = false);
   static std::vector<uint8_t> readBLECharacteristic(const NimBLEUUID& serviceUUID, const NimBLEUUID& characteristicUUID);
-  static bool writeFECTargetPower(uint16_t targetPower);
-  static bool writeFECTrackResistance(uint16_t grade, uint8_t rollingResistance = 0xFF);
-  static bool writeFECBasicResistance(uint8_t totalResistance);
-  static bool writeFECUserConfiguration(uint16_t bicycleWeight, uint16_t userWeight, uint8_t wheelDiameter, uint8_t gearRatio);
-  static bool writeFECCapabilitiesRequest();
+  // subscribe for the whole connection (used by TrainerControl for its own data)
+  static bool subscribeRemote(const NimBLEUUID& serviceUUID, const NimBLEUUID& characteristicUUID);
+  static bool isPinned(const NimBLEUUID& characteristicUUID);
+  static void forceReconnect();
   static std::vector<NimBLEAdvertisedDevice>* getScannedDevices();
   static String getStatusMessage();
 
@@ -53,7 +52,7 @@ class BTDeviceManager {
   static uint32_t getProperties(NimBLERemoteCharacteristic* remoteCharacteristic);
   static void onBLENotify(BLERemoteCharacteristic* pBLERemoteCharacteristic, uint8_t* pData, size_t length, bool isNotify);
   static bool changeBLENotify(Characteristic* characteristic, bool remove);
-  static uint8_t getFECChecksum(std::vector<uint8_t>* fecData);
+  static std::vector<NimBLEUUID> pinnedCharacteristics;
   static String statusMessage;
 };
 

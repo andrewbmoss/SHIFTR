@@ -14,6 +14,8 @@
 #include <Utils.h>
 #include <Version.h>
 #include <WiFi.h>
+#include <ArduinoOTA.h>
+#include <TrainerControl.h>
 
 void networkEvent(WiFiEvent_t event);
 void handleWebServerFile(const String& fileName);
@@ -21,11 +23,15 @@ void handleWebServerStatus();
 void handleWebServerSettings();
 void handleWebServerSettingsPost();
 void handleWebServerDebug();
+void handleWebServerLive();
+void handleFunctionButton();
+void startArduinoOTA();
 
 bool isMDNSStarted = false;
 bool isBLEConnected = false;
 bool isEthernetConnected = false;
 bool isWiFiConnected = false;
+bool isArduinoOTAStarted = false;
 
 DNSServer dnsServer;
 WebServer webServer(WEB_SERVER_PORT);
@@ -46,6 +52,9 @@ void setup() {
     ESP.restart();
   }
   log_i("Bluetooth device manager initialized");
+
+  // function button (short press: reconnect trainer, long press: reboot)
+  pinMode(FUNCTION_BUTTON_PIN, INPUT_PULLUP);
 
   // initialize network events
   WiFi.onEvent(networkEvent);
@@ -72,6 +81,7 @@ void setup() {
 
   webServer.on("/debug", handleWebServerDebug);
   webServer.on("/status", handleWebServerStatus);
+  webServer.on("/live", handleWebServerLive);
   webServer.on("/favicon.ico", [] { handleWebServerFile("favicon.ico"); });
   webServer.on("/style.css", [] { handleWebServerFile("style.css"); });
   webServer.on("/", [] { handleWebServerFile("index.html"); });
@@ -145,8 +155,62 @@ void setup() {
 
 void loop() {
   BTDeviceManager::update();
+  TrainerControl::update();
   DirConManager::update();
   iotWebConf.doLoop();
+  handleFunctionButton();
+  if (!isArduinoOTAStarted && (isEthernetConnected || isWiFiConnected)) {
+    startArduinoOTA();
+  }
+  if (isArduinoOTAStarted) {
+    ArduinoOTA.handle();
+  }
+}
+
+void startArduinoOTA() {
+  ArduinoOTA.setPort(ARDUINO_OTA_PORT);
+  ArduinoOTA.setHostname(Utils::getHostName().c_str());
+  ArduinoOTA.setPassword(SettingsManager::getAPPassword().c_str());
+  // our own MDNS instance carries the DirCon records, don't let ArduinoOTA restart it
+  ArduinoOTA.setMdnsEnabled(false);
+  ArduinoOTA.onStart([]() {
+    log_i("ArduinoOTA update starting, stopping bluetooth");
+    BTDeviceManager::stop();
+  });
+  ArduinoOTA.onError([](ota_error_t error) { log_e("ArduinoOTA error %u", error); });
+  ArduinoOTA.begin();
+  isArduinoOTAStarted = true;
+  log_i("ArduinoOTA ready on port %d", ARDUINO_OTA_PORT);
+}
+
+void handleFunctionButton() {
+  static bool lastReading = HIGH;
+  static bool stableState = HIGH;
+  static uint32_t lastChange = 0;
+  static uint32_t pressedAt = 0;
+  bool reading = digitalRead(FUNCTION_BUTTON_PIN);
+  uint32_t now = millis();
+  if (reading != lastReading) {
+    lastChange = now;
+    lastReading = reading;
+  }
+  if ((now - lastChange) < 50) {
+    return;  // debounce
+  }
+  if (reading != stableState) {
+    stableState = reading;
+    if (stableState == LOW) {
+      pressedAt = now;
+    } else if ((now - pressedAt) < FUNCTION_BUTTON_LONG_PRESS) {
+      log_i("Function button: reconnecting trainer");
+      BTDeviceManager::forceReconnect();
+    }
+  }
+  if ((stableState == LOW) && ((now - pressedAt) >= FUNCTION_BUTTON_LONG_PRESS)) {
+    log_i("Function button held: rebooting");
+    delay(100);
+    ESP.restart();
+  }
 }
 
 void networkEvent(WiFiEvent_t event) {
@@ -299,7 +363,26 @@ void handleWebServerSettings() {
   } else {
     json += "false";
   }
-  json += "";
+  json += ",";
+
+  json += "\"trainer_protocol\": ";
+  json += (int)SettingsManager::getTrainerProtocolPreference();
+  json += ",";
+
+  std::map<size_t, std::string> protocols = SettingsManager::getTrainerProtocolPreferences();
+  String protocols_json = "\"trainer_protocols\": [";
+  for (auto protocol = protocols.begin(); protocol != protocols.end(); protocol++) {
+    protocols_json += "{\"name\": \"";
+    protocols_json += protocol->second.c_str();
+    protocols_json += "\", \"value\": ";
+    protocols_json += protocol->first;
+    protocols_json += "},";
+  }
+  if (protocols_json.endsWith(",")) {
+    protocols_json.remove(protocols_json.length() - 1);
+  }
+  protocols_json += "]";
+  json += protocols_json;
 
   json += "}";
 
@@ -332,6 +415,9 @@ void handleWebServerSettingsPost() {
     }
     if (webServer.hasArg("difficulty")) {
       SettingsManager::setDifficulty(std::atoi(webServer.arg("difficulty").c_str()));
+    }
+    if (webServer.hasArg("trainer_protocol")) {
+      SettingsManager::setTrainerProtocolPreference((TrainerProtocolPreference)std::atoi(webServer.arg("trainer_protocol").c_str()));
     }
     if (webServer.hasArg("ftms_emulation")) {
       SettingsManager::setFTMSEnabled(true);
@@ -415,6 +501,10 @@ void handleWebServerStatus() {
   json += BTDeviceManager::getStatusMessage().c_str();
   json += "\",";
 
+  json += "\"trainer_protocol\": \"";
+  json += TrainerControl::getProtocolName();
+  json += "\",";
+
   json += "\"mode\": \"";
   json += "Pass-through";
   if (SettingsManager::isFTMSEnabled()) {
@@ -476,4 +566,43 @@ void handleWebServerDebug() {
   json += "}";
 
   webServer.send(200, "application/json", json);
+}
+// Live ride data for the status page, polled once per second
+void handleWebServerLive() {
+  char buffer[640];
+  const char* zwiftMode = "SIM";
+  switch (DirConManager::getZwiftTrainerMode()) {
+    case TrainerMode::SIM_MODE_VIRTUAL_SHIFTING:
+      zwiftMode = "SIM + virtual shifting";
+      break;
+    case TrainerMode::ERG_MODE:
+      zwiftMode = "ERG";
+      break;
+    default:
+      break;
+  }
+  double defaultGearRatio = DirConManager::getDefaultGearRatio();
+  uint32_t dataAge = TrainerControl::getMillisSinceLastData();
+  snprintf(buffer, sizeof(buffer),
+           "{\"trainer_connected\": %s, \"trainer_name\": \"%s\", \"protocol\": \"%s\", \"control\": %s, "
+           "\"power\": %u, \"cadence\": %u, \"cadence_source\": \"%s\", \"speed_kph\": %.1f, \"data_age_ms\": %ld, "
+           "\"zwift_clients\": %u, \"zwift_mode\": \"%s\", \"virtual_gear\": %d, \"gear_ratio\": %.2f, "
+           "\"zwift_grade\": %.2f, \"trainer_command\": \"%s\", \"blocked_writes\": %lu}",
+           BTDeviceManager::isConnected() ? "true" : "false",
+           BTDeviceManager::getConnecedDeviceName().c_str(),
+           TrainerControl::getProtocolName(),
+           TrainerControl::hasControl() ? "true" : "false",
+           TrainerControl::getPower(),
+           TrainerControl::getEffectiveCadence(defaultGearRatio),
+           TrainerControl::isCadenceMeasured() ? "trainer" : "estimated from speed",
+           TrainerControl::getSpeedMps() * 3.6,
+           dataAge == UINT32_MAX ? -1L : (long)dataAge,
+           (unsigned)DirConManager::getConnectedClientCount(),
+           zwiftMode,
+           DirConManager::getVirtualGear(),
+           DirConManager::getZwiftGearRatio(),
+           DirConManager::getZwiftGradePercent(),
+           TrainerControl::getLastCommandDescription().c_str(),
+           (unsigned long)DirConManager::getBlockedPassthroughWrites());
+  webServer.send(200, "application/json", buffer);
 }

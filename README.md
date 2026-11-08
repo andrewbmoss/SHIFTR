@@ -1,3 +1,109 @@
+# SHIFTR for Saris (FTMS fork)
+
+This fork of [JuergenLeber/SHIFTR](https://github.com/JuergenLeber/SHIFTR) adds a
+Bluetooth **FTMS** trainer backend, so trainers like the Saris H1/H2/H3 get Zwift
+virtual shifting through a WT32-ETH01 bridge. The bridge connects to the trainer
+over Bluetooth, shows up in Zwift as a Direct Connect (Ethernet) trainer that speaks
+the Zwift protocol, and turns Zwift's gear, grade and ERG commands into FTMS (or
+FE-C) commands for the trainer.
+
+Wiring and the first flash are in [WIRING.md](WIRING.md).
+
+## What changed compared to upstream SHIFTR
+
+- **FTMS backend** (`src/TrainerControl.cpp`, `lib/TrainerProtocol`): Request Control,
+  Set Indoor Bike Simulation, Set Target Power and Set Target Resistance, plus Indoor
+  Bike Data parsing. The FE-C backend is still there. *Settings > Trainer protocol*
+  picks one: *Auto* uses FTMS when the trainer has it.
+- **One writer, coalesced commands**: all trainer writes happen in the main loop, at
+  most every 250 ms, newest command wins, and the last command is re-sent every 5 s.
+  If the trainer reports that FTMS control was lost, the bridge requests it again
+  and re-sends.
+- **Reconnects recover on their own**: after a Bluetooth drop the bridge reconnects,
+  re-subscribes everything Zwift was subscribed to, and re-sends the last command.
+  Upstream needed Zwift to re-pair.
+- **Cadence fallback**: if the trainer doesn't report cadence, it is estimated from
+  flywheel speed. That works because the Cog keeps the physical gear fixed.
+- **Safety**: when Zwift disconnects, the trainer is set to a flat 0 % grade. While
+  Zwift drives the trainer through the Zwift service, any direct write to the
+  trainer's FTMS/FE-C control characteristic is blocked, so two controllers can't
+  fight. The *Blocked writes* counter on the status page shows if that ever happens.
+- **Web status page** now has a live *Ride* panel (power, cadence and its source,
+  virtual gear, Zwift grade, what was sent to the trainer).
+- **Function button** on IO4: short press re-pairs the trainer, hold 5 s reboots.
+- **ArduinoOTA** in addition to the web firmware upload (`pio run -e wt32-eth01_ota -t upload`).
+- Bigger app partitions (`min_spiffs.csv`). The firmware is about 1.3 MB and no longer
+  fits the default 1.25 MB OTA slots.
+- Fixes: the FE-C user configuration packed the bike weight wrong, the difficulty
+  field in the settings page was never saved, FTMS emulation passed Crr in the wrong
+  units, and grade calculation could produce NaN at extreme gears.
+- Uses the maintained `esp32async/AsyncTCP` fork, and all library versions are pinned.
+
+## Build and first flash (Windows)
+
+1. Install [VS Code](https://code.visualstudio.com/) and the **PlatformIO IDE** extension.
+2. Install the Silicon Labs **CP210x driver** if Windows doesn't recognise the adapter (Device Manager shows a COM port when it works).
+3. Open this folder in VS Code. PlatformIO downloads the toolchain and libraries on the first build.
+4. Wire the CP2102 and put the board in flash mode ([WIRING.md](WIRING.md)).
+5. PlatformIO sidebar > `wt32-eth01` > **Upload and Monitor**. You should see the boot log and, once Ethernet is up, a line like
+   `Ethernet DHCP successful with IP 192.168.1.50`.
+
+Prebuilt binaries are in `firmware/` if you'd rather not build. Flash
+`shiftr-saris-merged.bin` at address `0x0` with
+[esptool-js](https://espressif.github.io/esptool-js/) in Chrome or Edge, or with
+`esptool.py write_flash 0x0 shiftr-saris-merged.bin`.
+
+## First setup
+
+1. Disconnect the CP2102, connect Ethernet and the USB charger.
+2. Open `http://SHIFTR-xxxxxx.local` (the name is in the serial log), or use the IP address.
+3. Go to *Device settings*. User `admin`, password = the device name, e.g. `SHIFTR-123456`. Change it under *Configuration* afterwards.
+4. Set these, then *Save* (the device reboots):
+   - **Trainer device**: your Saris. Close QZ or any other app first: the trainer accepts only one Bluetooth connection, and anything still connected hides it from the bridge.
+   - **Trainer protocol**: *Auto (FTMS)*.
+   - **Virtual shifting**: on. **VS mode**: *Track Resistance* (recommended for FTMS).
+   - **Chainring**: the teeth of the chainring your chain sits on. **Sprocket**: 14 for the Zwift Cog. These set the physical ratio the virtual gears are computed against.
+5. On the status page the *Ride* panel should show the trainer *via FTMS* and power/speed when you pedal.
+
+## Pairing in Zwift (Windows)
+
+- The Windows network profile must be **Private**, and Zwift must be allowed through
+  the firewall. Direct Connect discovery uses mDNS, which Windows blocks on Public networks.
+- In the pairing screen pick **SHIFTR xxxxxx** for *Power*, *Controllable* and
+  *Cadence*. It shows a Direct Connect/Ethernet icon. Don't pair the Saris itself.
+- Pair the Zwift Click (or Play) as usual over Bluetooth. Zwift offers virtual shifting
+  once the controllable trainer speaks the Zwift protocol.
+
+## What to check on the first ride
+
+| Check | Where | Expected |
+|---|---|---|
+| Trainer link | *Ride* panel | `... via FTMS (control granted)` after the first command |
+| Shifting | Press the Click | *Virtual gear* changes, *Sent to trainer* grade moves, resistance follows within about 0.5 s |
+| Climbs | Ride a hill | *Zwift grade* rises, sent grade rises with it |
+| ERG | Start a workout | *Sent to trainer* shows `Target power ... W` |
+| Cadence | *Ride* panel | Source says `trainer` or `estimated from speed`. If it is estimated and reads wrong, correct the chainring setting. |
+
+If shifting feels too strong or too weak, *Difficulty* scales it (100 % = 1:1). If
+*Track Resistance* feels laggy on your trainer, try *Target Power*, which uses ERG on
+the trainer. If FTMS misbehaves, try the *FE-C* protocol. The Saris advertised both.
+
+## Updating
+
+Over Ethernet, without the CP2102:
+
+- Web page > *Firmware update*, upload `.pio/build/wt32-eth01/firmware.bin`; or
+- edit `upload_port`/`--auth` in the `[env:wt32-eth01_ota]` section of `platformio.ini`, then run `pio run -e wt32-eth01_ota -t upload`.
+
+## Tests
+
+`pio test -e native` runs the PC unit tests for the FTMS/FE-C encoders and the
+virtual-shifting physics (`test/test_protocol`).
+
+---
+
+# Upstream README
+
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![CI](https://github.com/JuergenLeber/SHIFTR/actions/workflows/build.yml/badge.svg)](https://github.com/JuergenLeber/SHIFTR/actions/workflows/build.yml)
 # SHIFTR 

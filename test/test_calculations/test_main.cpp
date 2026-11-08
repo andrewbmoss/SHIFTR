@@ -15,6 +15,9 @@ double measuredSpeed = 5;
 uint16_t maximumResistance = 200; // 200 N
 uint16_t difficulty = 100; // 100% -> 1:1
 
+void setUp(void) {}
+void tearDown(void) {}
+
 void test_trackresistance(void) {
   //Logger::defaultLogLevel = LOG_LEVEL_DEBUG;
 

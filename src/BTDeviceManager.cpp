@@ -3,6 +3,8 @@
 #include <BTDeviceManager.h>
 #include <Config.h>
 #include <DirConManager.h>
+#include <TrainerControl.h>
+#include <UUIDs.h>
 #include <Utils.h>
 #include <arduino-timer.h>
 
@@ -18,10 +20,15 @@ bool BTDeviceManager::started = false;
 Timer<> BTDeviceManager::scanTimer = timer_create_default();
 Timer<> BTDeviceManager::connectTimer = timer_create_default();
 String BTDeviceManager::statusMessage = "";
+std::vector<NimBLEUUID> BTDeviceManager::pinnedCharacteristics{};
 
 class BTDeviceServiceManagerCallbacks : public ServiceManagerCallbacks {
   void onCharacteristicSubscriptionChanged(Characteristic* characteristic, bool removed) {
     if (!characteristic->getService()->isInternal()) {
+      if (BTDeviceManager::isPinned(characteristic->UUID)) {
+        // the bridge itself needs this one, it stays subscribed for the whole connection
+        return;
+      }
       if (removed && (characteristic->getSubscriptions().size() == 0)) {
         BTDeviceManager::changeBLENotify(characteristic, true);
       } else {
@@ -34,6 +41,7 @@ class BTDeviceServiceManagerCallbacks : public ServiceManagerCallbacks {
 };
 
 void BTDeviceManager::onBLENotify(BLERemoteCharacteristic* pBLERemoteCharacteristic, uint8_t* pData, size_t length, bool isNotify) {
+  TrainerControl::onNotify(pBLERemoteCharacteristic->getUUID(), pData, length);
   DirConManager::notifyDirConCharacteristic(pBLERemoteCharacteristic->getUUID(), pData, length);
 }
 
@@ -73,6 +81,7 @@ void BTDeviceManager::update() {
       if (!nimBLEClient->isConnected()) {
         connected = false;
         connectedDeviceName = "";
+        TrainerControl::onDisconnected();
         startScan();
       }
     }
@@ -133,6 +142,13 @@ NimBLEAdvertisedDevice* BTDeviceManager::getRemoteDevice() {
 }
 
 bool BTDeviceManager::connectRemoteDevice(NimBLEAdvertisedDevice* remoteDevice) {
+  if (remoteDevice == nullptr) {
+    log_e("No trainer selected or trainer not found in scan results");
+    statusMessage = "No trainer selected";
+    startScan();
+    return false;
+  }
+  pinnedCharacteristics.clear();
   log_i("Connecting to BLE device %s (%s)", remoteDevice->getAddress().toString().c_str(), remoteDevice->getName().c_str());
   stopScan();
   nimBLEClient = nullptr;
@@ -179,6 +195,19 @@ bool BTDeviceManager::connectRemoteDevice(NimBLEAdvertisedDevice* remoteDevice) 
             service->addCharacteristic(characteristic);
           }
           characteristic->setProperties(getProperties((*remoteCharacterisic)));
+        }
+      }
+    }
+    TrainerControl::onConnected(nimBLEClient->getService(NimBLEUUID(FITNESS_MACHINE_SERVICE_UUID)) != nullptr,
+                                nimBLEClient->getService(NimBLEUUID(TACX_FEC_PRIMARY_SERVICE_UUID)) != nullptr);
+    // after a reconnect the trainer forgot all notification subscriptions, restore the ones Zwift still has
+    for (Service* service : serviceManager->getServices()) {
+      if (service->isInternal()) {
+        continue;
+      }
+      for (Characteristic* characteristic : service->getCharacteristics()) {
+        if ((characteristic->getSubscriptions().size() > 0) && !isPinned(characteristic->UUID)) {
+          changeBLENotify(characteristic, false);
         }
       }
     }
@@ -278,7 +307,7 @@ uint32_t BTDeviceManager::getProperties(NimBLERemoteCharacteristic* remoteCharac
   return returnValue;
 }
 
-bool BTDeviceManager::writeBLECharacteristic(const NimBLEUUID& serviceUUID, const NimBLEUUID& characteristicUUID, std::vector<uint8_t>* data) {
+bool BTDeviceManager::writeBLECharacteristic(const NimBLEUUID& serviceUUID, const NimBLEUUID& characteristicUUID, std::vector<uint8_t>* data, bool withResponse) {
   if (!connected) {
     log_e("BLE characteristic write failed: Not connected");
     return false;
@@ -289,13 +318,17 @@ bool BTDeviceManager::writeBLECharacteristic(const NimBLEUUID& serviceUUID, cons
   if (remoteService) {
     remoteCharacteristic = remoteService->getCharacteristic(characteristicUUID);
     if (remoteCharacteristic) {
-      if (remoteCharacteristic->canWrite()) {
+      if (remoteCharacteristic->canWrite() || remoteCharacteristic->canWriteNoResponse()) {
         // value needs to be copied to this scope as it will be handled asynchronously by another core and NimBLE will only write garbage
         std::vector<uint8_t> valueData;
         for (auto currentByte = data->begin(); currentByte != data->end(); currentByte++) {
           valueData.push_back(*currentByte);
         }
-        if (remoteCharacteristic->writeValue(valueData)) {
+        bool response = withResponse && remoteCharacteristic->canWrite();
+        if (!remoteCharacteristic->canWriteNoResponse()) {
+          response = true;
+        }
+        if (remoteCharacteristic->writeValue(valueData, response)) {
           return true;
         }
       } else {
@@ -349,7 +382,8 @@ bool BTDeviceManager::changeBLENotify(Characteristic* characteristic, bool remov
     if (remoteCharacteristic) {
       if (remoteCharacteristic->canNotify() || remoteCharacteristic->canIndicate()) {
         if (!remove) {
-          return remoteCharacteristic->subscribe(true, onBLENotify);
+          // indicate-only characteristics (e.g. FTMS control point) need an indication subscription
+          return remoteCharacteristic->subscribe(remoteCharacteristic->canNotify(), onBLENotify);
         } else {
           return remoteCharacteristic->unsubscribe();
         }
@@ -365,113 +399,55 @@ bool BTDeviceManager::changeBLENotify(Characteristic* characteristic, bool remov
   return false;
 }
 
-// BLE write characteristic 6e40fec3-b5a3-f393-e0a9-e50e24dcca9e with data [A4 09 4E 05 31 FF FF FF FF FF B8 01 40] =110W
-// BLE write characteristic 6e40fec3-b5a3-f393-e0a9-e50e24dcca9e with data [A4 09 4E 05 31 FF FF FF FF FF CC 01 54] =115W
-
-bool BTDeviceManager::writeFECTargetPower(uint16_t targetPower) {
-  std::vector<uint8_t> fecData;
-  fecData.push_back(0xA4);  // SYNC
-  fecData.push_back(0x09);  // MSG_LEN
-  fecData.push_back(0x4E);  // MSG_ID
-  fecData.push_back(0x05);  // CONTENT_START
-  fecData.push_back(0x31);  // PAGE 49 (0x31)
-  fecData.push_back(0xFF);
-  fecData.push_back(0xFF);
-  fecData.push_back(0xFF);
-  fecData.push_back(0xFF);
-  fecData.push_back(0xFF);
-  fecData.push_back((uint8_t)targetPower);
-  fecData.push_back((uint8_t)(targetPower >> 8));
-  fecData.push_back(getFECChecksum(&fecData));  // CHECKSUM
-  return writeBLECharacteristic(NimBLEUUID(TACX_FEC_PRIMARY_SERVICE_UUID), NimBLEUUID(TACX_FEC_WRITE_CHARACTERISTIC_UUID), &fecData);
+bool BTDeviceManager::subscribeRemote(const NimBLEUUID& serviceUUID, const NimBLEUUID& characteristicUUID) {
+  if (!connected || (nimBLEClient == nullptr)) {
+    return false;
+  }
+  NimBLERemoteService* remoteService = nimBLEClient->getService(serviceUUID);
+  if (remoteService == nullptr) {
+    log_w("Trainer has no service %s", serviceUUID.toString().c_str());
+    return false;
+  }
+  NimBLERemoteCharacteristic* remoteCharacteristic = remoteService->getCharacteristic(characteristicUUID);
+  if (remoteCharacteristic == nullptr) {
+    log_w("Trainer has no characteristic %s", characteristicUUID.toString().c_str());
+    return false;
+  }
+  bool result = false;
+  if (remoteCharacteristic->canNotify()) {
+    result = remoteCharacteristic->subscribe(true, onBLENotify);
+  } else if (remoteCharacteristic->canIndicate()) {
+    result = remoteCharacteristic->subscribe(false, onBLENotify);
+  }
+  if (result) {
+    if (!isPinned(characteristicUUID)) {
+      pinnedCharacteristics.push_back(characteristicUUID);
+    }
+    log_i("Subscribed to trainer characteristic %s", characteristicUUID.toString().c_str());
+  } else {
+    log_e("Subscribing to trainer characteristic %s failed", characteristicUUID.toString().c_str());
+  }
+  return result;
 }
 
-// BLE write characteristic 6e40fec3-b5a3-f393-e0a9-e50e24dcca9e with data [A4 09 4E 05 33 FF FF FF FF 20 4E FF F9]
-
-bool BTDeviceManager::writeFECTrackResistance(uint16_t grade, uint8_t rollingResistance) {
-  std::vector<uint8_t> fecData;
-  fecData.push_back(0xA4);  // SYNC
-  fecData.push_back(0x09);  // MSG_LEN
-  fecData.push_back(0x4E);  // MSG_ID
-  fecData.push_back(0x05);  // CONTENT_START
-  fecData.push_back(0x33);  // PAGE 51 (0x33)
-  fecData.push_back(0xFF);
-  fecData.push_back(0xFF);
-  fecData.push_back(0xFF);
-  fecData.push_back(0xFF);
-  fecData.push_back((uint8_t)grade);
-  fecData.push_back((uint8_t)(grade >> 8));
-  fecData.push_back(rollingResistance);
-  fecData.push_back(getFECChecksum(&fecData));  // CHECKSUM
-  return writeBLECharacteristic(NimBLEUUID(TACX_FEC_PRIMARY_SERVICE_UUID), NimBLEUUID(TACX_FEC_WRITE_CHARACTERISTIC_UUID), &fecData);
-}
-
-bool BTDeviceManager::writeFECBasicResistance(uint8_t totalResistance) {
-  std::vector<uint8_t> fecData;
-  fecData.push_back(0xA4);  // SYNC
-  fecData.push_back(0x09);  // MSG_LEN
-  fecData.push_back(0x4E);  // MSG_ID
-  fecData.push_back(0x05);  // CONTENT_START
-  fecData.push_back(0x30);  // PAGE 48 (0x30)
-  fecData.push_back(0xFF);
-  fecData.push_back(0xFF);
-  fecData.push_back(0xFF);
-  fecData.push_back(0xFF);
-  fecData.push_back(0xFF);
-  fecData.push_back(0xFF);
-  fecData.push_back(totalResistance);
-  fecData.push_back(getFECChecksum(&fecData));  // CHECKSUM
-  return writeBLECharacteristic(NimBLEUUID(TACX_FEC_PRIMARY_SERVICE_UUID), NimBLEUUID(TACX_FEC_WRITE_CHARACTERISTIC_UUID), &fecData);
-}
-
-bool BTDeviceManager::writeFECUserConfiguration(uint16_t bicycleWeight, uint16_t userWeight, uint8_t wheelDiameter, uint8_t gearRatio) {
-  std::vector<uint8_t> fecData;
-  fecData.push_back(0xA4);  // SYNC
-  fecData.push_back(0x09);  // MSG_LEN
-  fecData.push_back(0x4F);  // MSG_ID -> ACKNOWLEDGED
-  fecData.push_back(0x05);  // CONTENT_START
-  fecData.push_back(0x37);  // PAGE 55 (0x37)
-  fecData.push_back((uint8_t)userWeight);
-  fecData.push_back((uint8_t)(userWeight >> 8));
-  fecData.push_back(0xFF);
-  fecData.push_back((uint8_t)bicycleWeight << 4);
-  fecData.push_back((uint8_t)(bicycleWeight >> 8));
-  fecData.push_back(wheelDiameter);
-  fecData.push_back(gearRatio);
-  fecData.push_back(getFECChecksum(&fecData));  // CHECKSUM
-  return writeBLECharacteristic(NimBLEUUID(TACX_FEC_PRIMARY_SERVICE_UUID), NimBLEUUID(TACX_FEC_WRITE_CHARACTERISTIC_UUID), &fecData);
-}
-
-bool BTDeviceManager::writeFECCapabilitiesRequest() {
-  std::vector<uint8_t> fecData;
-  fecData.push_back(0xA4);  // SYNC
-  fecData.push_back(0x09);  // MSG_LEN
-  fecData.push_back(0x4F);  // MSG_ID
-  fecData.push_back(0x05);  // CONTENT_START
-  fecData.push_back(0x46);  // PAGE 70 (0x46)
-  fecData.push_back(0xFF);
-  fecData.push_back(0xFF);
-  fecData.push_back(0xFF);
-  fecData.push_back(0xFF);
-  fecData.push_back(0x80);  // REQ TRANSM RESPONSE
-  fecData.push_back(0x36);  // PAGE 54 (0x36)
-  fecData.push_back(0x01);  // COMMAND_TYPE_RDP
-  fecData.push_back(getFECChecksum(&fecData));  // CHECKSUM
-  return writeBLECharacteristic(NimBLEUUID(TACX_FEC_PRIMARY_SERVICE_UUID), NimBLEUUID(TACX_FEC_WRITE_CHARACTERISTIC_UUID), &fecData);
-}
-
-
-uint8_t BTDeviceManager::getFECChecksum(std::vector<uint8_t>* fecData) {
-  uint8_t checksum = 0;
-  if (fecData->size() > 0) {
-    checksum = fecData->at(0);
-    if (fecData->size() > 1) {
-      for (size_t checksumIndex = 1; checksumIndex < fecData->size(); checksumIndex++) {
-        checksum = (checksum ^ fecData->at(checksumIndex));
-      }
+bool BTDeviceManager::isPinned(const NimBLEUUID& characteristicUUID) {
+  for (const NimBLEUUID& uuid : pinnedCharacteristics) {
+    if (uuid.equals(characteristicUUID)) {
+      return true;
     }
   }
-  return checksum;
+  return false;
+}
+
+void BTDeviceManager::forceReconnect() {
+  log_i("Forcing trainer reconnect");
+  if ((nimBLEClient != nullptr) && nimBLEClient->isConnected()) {
+    // the disconnect callback starts a new scan, which reconnects to the selected trainer
+    nimBLEClient->disconnect();
+  } else {
+    stopScan();
+    startScan();
+  }
 }
 
 String BTDeviceManager::getStatusMessage() {
