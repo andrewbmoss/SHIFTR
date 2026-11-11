@@ -5,6 +5,8 @@
 uint64_t Utils::macAddress = ESP.getEfuseMac();
 
 std::string Utils::getMacAddressString() {
+  // read the efuse directly: this can run during static initialisation, before Utils::macAddress is set
+  uint64_t macAddress = ESP.getEfuseMac();
   static char macAddressString[18];
   sprintf(macAddressString, "%02X-%02X-%02X-%02X-%02X-%02X", (uint8_t)(macAddress), (uint8_t)(macAddress >> 8), (uint8_t)(macAddress >> 16), (uint8_t)(macAddress >> 24), (uint8_t)(macAddress >> 32), (uint8_t)(macAddress >> 40));
   std::string returnString = macAddressString;
@@ -12,6 +14,8 @@ std::string Utils::getMacAddressString() {
 }
 
 std::string Utils::getSerialNumberString() {
+  // read the efuse directly: this can run during static initialisation, before Utils::macAddress is set
+  uint64_t macAddress = ESP.getEfuseMac();
   static char serialNumberString[16];
   sprintf(serialNumberString, "%i%i%i", (uint8_t)(macAddress >> 24), (uint8_t)(macAddress >> 32), (uint8_t)(macAddress >> 40));
   std::string returnString = serialNumberString;
@@ -19,6 +23,8 @@ std::string Utils::getSerialNumberString() {
 }
 
 std::string Utils::getDeviceName() {
+  // read the efuse directly: this can run during static initialisation, before Utils::macAddress is set
+  uint64_t macAddress = ESP.getEfuseMac();
   static char deviceName[strlen(DEVICE_NAME_PREFIX) + 8];
   sprintf(deviceName, "%s %02X%02X%02X", DEVICE_NAME_PREFIX, (uint8_t)(macAddress >> 24), (uint8_t)(macAddress >> 32), (uint8_t)(macAddress >> 40));
   deviceName[strlen(DEVICE_NAME_PREFIX) + 7] = 0x00;

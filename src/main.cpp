@@ -36,7 +36,10 @@ bool isArduinoOTAStarted = false;
 DNSServer dnsServer;
 WebServer webServer(WEB_SERVER_PORT);
 HTTPUpdateServer updateServer;
-IotWebConf iotWebConf(Utils::getHostName().c_str(), &dnsServer, &webServer, Utils::getHostName().c_str(), WIFI_CONFIG_VERSION);
+// IotWebConf keeps the pointers it is given, so the strings must outlive it
+// (passing Utils::getHostName().c_str() directly left them dangling and broke the setup access point)
+std::string hostName = Utils::getHostName();
+IotWebConf iotWebConf(hostName.c_str(), &dnsServer, &webServer, hostName.c_str(), WIFI_CONFIG_VERSION);
 
 ServiceManager serviceManager;
 
