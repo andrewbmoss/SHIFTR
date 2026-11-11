@@ -382,10 +382,11 @@ bool BTDeviceManager::changeBLENotify(Characteristic* characteristic, bool remov
     if (remoteCharacteristic) {
       if (remoteCharacteristic->canNotify() || remoteCharacteristic->canIndicate()) {
         if (!remove) {
-          // indicate-only characteristics (e.g. FTMS control point) need an indication subscription
-          return remoteCharacteristic->subscribe(remoteCharacteristic->canNotify(), onBLENotify);
+          // indicate-only characteristics (e.g. FTMS control point) need an indication subscription;
+          // the CCCD write must be confirmed (Saris ignores unconfirmed ones)
+          return remoteCharacteristic->subscribe(remoteCharacteristic->canNotify(), onBLENotify, true);
         } else {
-          return remoteCharacteristic->unsubscribe();
+          return remoteCharacteristic->unsubscribe(true);
         }
       } else {
         log_e("BLE characteristic change notify failed: Remote characteristic %s can't notify nor indicate", characteristic->UUID.to128().toString().c_str());
@@ -413,11 +414,17 @@ bool BTDeviceManager::subscribeRemote(const NimBLEUUID& serviceUUID, const NimBL
     log_w("Trainer has no characteristic %s", characteristicUUID.toString().c_str());
     return false;
   }
+  if (remoteCharacteristic->getDescriptor(NimBLEUUID((uint16_t)0x2902)) == nullptr) {
+    // NimBLE would report success without subscribing anything
+    log_e("Trainer characteristic %s has no notification descriptor (CCCD)", characteristicUUID.toString().c_str());
+    return false;
+  }
   bool result = false;
+  // write the CCCD *with* response: the spec requires it and Saris trainers ignore it otherwise
   if (remoteCharacteristic->canNotify()) {
-    result = remoteCharacteristic->subscribe(true, onBLENotify);
+    result = remoteCharacteristic->subscribe(true, onBLENotify, true);
   } else if (remoteCharacteristic->canIndicate()) {
-    result = remoteCharacteristic->subscribe(false, onBLENotify);
+    result = remoteCharacteristic->subscribe(false, onBLENotify, true);
   }
   if (result) {
     if (!isPinned(characteristicUUID)) {

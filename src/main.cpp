@@ -34,6 +34,9 @@ bool isMDNSStarted = false;
 bool isBLEConnected = false;
 bool isEthernetConnected = false;
 bool isWiFiConnected = false;
+bool isRecoveryBoot = false;         // RECOVERY button held at power-up: keep the access point
+uint32_t ethernetDownSince = 0;
+void manageWiFiRadio();
 bool isArduinoOTAStarted = false;
 
 DNSServer dnsServer;
@@ -76,6 +79,12 @@ void setup() {
   // initialize wifi manager and web server
   iotWebConf.setStatusPin(WIFI_STATUS_PIN);
   iotWebConf.setConfigPin(WIFI_CONFIG_PIN);
+  pinMode(WIFI_CONFIG_PIN, INPUT_PULLUP);
+  delay(5);
+  isRecoveryBoot = (digitalRead(WIFI_CONFIG_PIN) == LOW);
+  if (isRecoveryBoot) {
+    log_i("Recovery button held: access point stays on with the default password");
+  }
   iotWebConf.addParameterGroup(SettingsManager::getIoTWebConfSettingsParameterGroup());
   iotWebConf.setupUpdateServer(
       [](const char* updatePath) { updateServer.setup(&webServer, updatePath, SettingsManager::getUsername().c_str(), SettingsManager::getAPPassword().c_str()); },
@@ -164,6 +173,7 @@ void loop() {
   TrainerControl::update();
   DirConManager::update();
   iotWebConf.doLoop();
+  manageWiFiRadio();
   handleFunctionButton();
   if (!isArduinoOTAStarted && (isEthernetConnected || isWiFiConnected)) {
     startArduinoOTA();
@@ -616,4 +626,36 @@ void handleWebServerLive() {
            (unsigned long)DirConManager::getBlockedPassthroughWrites(),
            TrainerControl::getPacketSummary().c_str());
   webServer.send(200, "application/json", buffer);
+}
+
+// The ESP32 has one 2.4 GHz radio for Wi-Fi and Bluetooth. IotWebConf keeps its setup access point
+// running forever when no Wi-Fi network is configured, which costs Bluetooth airtime and made the
+// trainer connection drop. With Ethernet up and no Wi-Fi wanted, switch Wi-Fi off and serve the web
+// pages ourselves (IotWebConf only does that in its Wi-Fi states).
+void manageWiFiRadio() {
+  bool wifiConfigured = iotWebConf.getWifiSsidParameter()->valueBuffer[0] != '\0';
+  iotwebconf::NetworkState state = iotWebConf.getState();
+  uint32_t now = millis();
+
+  if (isEthernetConnected) {
+    ethernetDownSince = 0;
+    if (!wifiConfigured && !isRecoveryBoot &&
+        ((state == iotwebconf::NetworkState::ApMode) || (state == iotwebconf::NetworkState::NotConfigured))) {
+      log_i("Ethernet is up and no Wi-Fi is configured: turning the Wi-Fi access point off");
+      iotWebConf.goOffLine();
+    }
+  } else if (state == iotwebconf::NetworkState::OffLine) {
+    if (ethernetDownSince == 0) {
+      ethernetDownSince = now;
+    } else if (now - ethernetDownSince > 30000) {
+      // no Ethernet for a while: bring the access point back so the device stays reachable
+      log_w("Ethernet down for 30 s: turning the Wi-Fi access point back on");
+      ethernetDownSince = 0;
+      iotWebConf.goOnLine();
+    }
+  }
+
+  if (iotWebConf.getState() == iotwebconf::NetworkState::OffLine) {
+    webServer.handleClient();
+  }
 }
