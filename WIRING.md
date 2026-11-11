@@ -3,10 +3,14 @@
 ![Wiring diagram](docs/wiring/wiring.svg)
 
 Pin names below match the silkscreen on the WT32-ETH01. The board has a 20-pin
-main header (two rows of 10) and a 6-pin programming header at the antenna end
-(EN, GND, 3V3, TXD, RXD, IO0). If your board shipped with only the main header
-soldered, solder 6 male pins into the programming header, or hold Dupont leads in
-place with a rubber band for the one-time flash.
+main header (two rows of 10) plus 6 programming pins at the antenna end, three at
+the end of each row: `EN`, `GND`, `3V3` on one side and `IO0`, `RX0`, `TX0` on the
+other. If your board shipped without pins there, solder them in, or hold Dupont
+leads in place with a rubber band for the one-time flash.
+
+> **Watch out:** the main header also has pins printed `TXD` and `RXD` (IO17 and
+> IO5). Those belong to a second serial port that can't be used for flashing. For
+> flashing, use the pins printed **`TX0`** and **`RX0`** (with a zero).
 
 ## Permanent connections
 
@@ -27,8 +31,8 @@ diagonal legs and you can't get the pairing wrong.
 
 | CP2102 pin | WT32-ETH01 pin |
 |---|---|
-| TXD | `RXD` (IO3, programming header) |
-| RXD | `TXD` (IO1, programming header) |
+| TXD | `RX0` (IO3, programming pins) |
+| RXD | `TX0` (IO1, programming pins) |
 | GND | `GND` |
 | +5V | `5V` (main header) |
 
@@ -45,12 +49,28 @@ flashing. Use a jumper wire, not a permanent button.
 
 ### Entering flash mode
 
-The 5-pin CP2102 has no DTR line, so the board can't be reset automatically:
+The 5-pin CP2102 has no DTR/RTS lines, so PlatformIO can't put the board into
+flash mode itself (that's the long row of dots after `Connecting`). Do it by hand:
 
-1. Connect `IO0` to `GND` (boot jumper).
-2. Tap the reset button (or briefly touch `EN` to `GND`).
-3. Remove the boot jumper.
+1. Unplug the CP2102 from the PC.
+2. Connect `IO0` to `GND` with a jumper wire.
+3. Plug the CP2102 back in. The ESP32 powers up straight into flash mode.
 4. Start the upload in PlatformIO.
-5. When it finishes, tap reset to start the firmware.
+5. When it finishes, remove the jumper and unplug/replug the CP2102 to start the firmware.
+
+If you have a reset button wired to `EN`, you can instead hold the jumper in
+place, tap reset, and start the upload.
+
+### If the upload fails with "No serial data received"
+
+Run *PlatformIO > Monitor* only (no upload), at 115200 baud, then power-cycle
+the board and read what appears:
+
+| Monitor shows | Meaning | Fix |
+|---|---|---|
+| Nothing at all | No data reaches the PC | Check that adapter `RXD` goes to board `TX0` (not `TXD`), that GND is shared, and that the board is powered (red LED on) |
+| `boot:0x13 (SPI_FAST_FLASH_BOOT)` | Board starts normally, not in flash mode | `IO0` wasn't on GND at power-up |
+| `boot:0x3 (DOWNLOAD_BOOT...)` `waiting for download` | Flash mode works | Board receives nothing: check adapter `TXD` → board `RX0`. Close the monitor before uploading |
+| Garbage characters | Baud rate is wrong | Set the monitor to 115200 |
 
 After this first flash, every update goes over Ethernet (see README, "Updating").
