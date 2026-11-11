@@ -97,6 +97,60 @@ void test_parse_control_point_response(void) {
   TEST_ASSERT_FALSE(parseControlPointResponse(notResponse, sizeof(notResponse), response));
 }
 
+// ---------------------------------------------------------------- Cycling Power
+
+void test_parse_cycling_power_with_crank(void) {
+  // flags 0x0020 (crank data), 215 W, 1000 crank revs, event time 0x1000
+  const uint8_t data[] = {0x20, 0x00, 0xD7, 0x00, 0xE8, 0x03, 0x00, 0x10};
+  CyclingPowerData result;
+  TEST_ASSERT_TRUE(parseCyclingPowerMeasurement(data, sizeof(data), result));
+  TEST_ASSERT_EQUAL_INT16(215, result.powerWatts);
+  TEST_ASSERT_TRUE(result.hasCrank);
+  TEST_ASSERT_EQUAL_UINT16(1000, result.crankRevolutions);
+  TEST_ASSERT_EQUAL_UINT16(0x1000, result.crankEventTime);
+}
+
+void test_parse_cycling_power_wheel_and_crank(void) {
+  // flags 0x0031: pedal balance, wheel data (6 bytes), crank data (4 bytes)
+  const uint8_t data[] = {0x31, 0x00, 0x2C, 0x01, 0x32, 0x10, 0x00, 0x00, 0x00, 0x00, 0x08, 0x05, 0x00, 0x00, 0x04};
+  CyclingPowerData result;
+  TEST_ASSERT_TRUE(parseCyclingPowerMeasurement(data, sizeof(data), result));
+  TEST_ASSERT_EQUAL_INT16(300, result.powerWatts);
+  TEST_ASSERT_TRUE(result.hasWheel);
+  TEST_ASSERT_EQUAL_UINT32(16, result.wheelRevolutions);
+  TEST_ASSERT_TRUE(result.hasCrank);
+  TEST_ASSERT_EQUAL_UINT16(5, result.crankRevolutions);
+  TEST_ASSERT_EQUAL_UINT16(0x0400, result.crankEventTime);
+}
+
+void test_parse_cycling_power_only(void) {
+  const uint8_t data[] = {0x00, 0x00, 0x96, 0x00};
+  CyclingPowerData result;
+  TEST_ASSERT_TRUE(parseCyclingPowerMeasurement(data, sizeof(data), result));
+  TEST_ASSERT_EQUAL_INT16(150, result.powerWatts);
+  TEST_ASSERT_FALSE(result.hasCrank);
+}
+
+void test_crank_cadence(void) {
+  CrankCadence calc(3000);
+  calc.update(100, 0, 0);
+  // 3 revolutions in 2 s (2048/1024) = 90 rpm
+  TEST_ASSERT_DOUBLE_WITHIN(0.01, 90.0, calc.update(103, 2048, 1000));
+  // same event repeated: holds the value
+  TEST_ASSERT_DOUBLE_WITHIN(0.01, 90.0, calc.update(103, 2048, 2000));
+  // wrap-around of both counters: 65535 -> 1 is 2 revs, 65000 -> 300 is 836 ticks
+  CrankCadence wrap(3000);
+  wrap.update(65535, 65000, 0);
+  TEST_ASSERT_DOUBLE_WITHIN(0.1, 2 * 60.0 * 1024.0 / 836.0, wrap.update(1, 300, 500));
+  // stopped pedalling
+  TEST_ASSERT_EQUAL_DOUBLE(0.0, calc.current(6000));
+}
+
+void test_to_hex(void) {
+  const uint8_t data[] = {0x44, 0x00, 0xAB};
+  TEST_ASSERT_EQUAL_STRING("44 00 AB", toHex(data, sizeof(data)).c_str());
+}
+
 // ---------------------------------------------------------------- FE-C
 
 void test_fec_target_power_matches_known_capture(void) {
@@ -200,6 +254,11 @@ int main(int argc, char** argv) {
   RUN_TEST(test_parse_indoor_bike_data_more_data_and_extra_fields);
   RUN_TEST(test_parse_indoor_bike_data_truncated);
   RUN_TEST(test_parse_control_point_response);
+  RUN_TEST(test_parse_cycling_power_with_crank);
+  RUN_TEST(test_parse_cycling_power_wheel_and_crank);
+  RUN_TEST(test_parse_cycling_power_only);
+  RUN_TEST(test_crank_cadence);
+  RUN_TEST(test_to_hex);
   RUN_TEST(test_fec_target_power_matches_known_capture);
   RUN_TEST(test_fec_track_resistance);
   RUN_TEST(test_fec_user_configuration);

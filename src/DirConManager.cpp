@@ -589,6 +589,11 @@ void DirConManager::updateSIMModeResistance() {
     double totalWeight = (zwiftBicycleWeight + zwiftUserWeight) / 100.0;
     double gearRatio = zwiftGearRatio / 10000.0;
     uint8_t cadence = TrainerControl::getEffectiveCadence(defaultGearRatio);
+    if (TrainerControl::getMillisSinceLastData() > TRAINER_DATA_TIMEOUT) {
+      // no power/cadence from the trainer: shifting would only change the gravity part of the
+      // resistance (almost nothing on the flat), so assume a typical cadence instead
+      cadence = NOMINAL_CADENCE;
+    }
 
     if (virtualShiftingMode == VirtualShiftingMode::TARGET_POWER) {
       TrainerControl::setTargetPower(Calculations::calculateGearedPower(totalWeight, grade, cadence, gearRatio, defaultGearRatio, difficulty));

@@ -156,6 +156,91 @@ bool parseResistanceLevelRange(const uint8_t* data, size_t length, ResistanceLev
 }
 
 // ---------------------------------------------------------------------------
+// Cycling Power
+// ---------------------------------------------------------------------------
+
+bool parseCyclingPowerMeasurement(const uint8_t* data, size_t length, CyclingPowerData& result) {
+  result = CyclingPowerData();
+  if ((data == nullptr) || (length < 4)) {
+    return false;
+  }
+  uint16_t flags = readUInt16(data);
+  result.powerWatts = readSInt16(data + 2);
+  size_t offset = 4;
+  if (flags & 0x0001) {  // pedal power balance
+    offset += 1;
+  }
+  if (flags & 0x0004) {  // accumulated torque
+    offset += 2;
+  }
+  if (flags & 0x0010) {  // wheel revolution data
+    if (offset + 6 > length) return true;  // power is still valid
+    result.wheelRevolutions = (uint32_t)data[offset] | ((uint32_t)data[offset + 1] << 8) | ((uint32_t)data[offset + 2] << 16) | ((uint32_t)data[offset + 3] << 24);
+    result.wheelEventTime = readUInt16(data + offset + 4);
+    result.hasWheel = true;
+    offset += 6;
+  }
+  if (flags & 0x0020) {  // crank revolution data
+    if (offset + 4 > length) return true;
+    result.crankRevolutions = readUInt16(data + offset);
+    result.crankEventTime = readUInt16(data + offset + 2);
+    result.hasCrank = true;
+    offset += 4;
+  }
+  return true;
+}
+
+double CrankCadence::update(uint16_t revolutions, uint16_t eventTime1024, uint32_t nowMs) {
+  if (!initialised) {
+    initialised = true;
+    lastRevolutions = revolutions;
+    lastEventTime = eventTime1024;
+    lastChangeMs = nowMs;
+    return cadence;
+  }
+  uint16_t deltaRevolutions = (uint16_t)(revolutions - lastRevolutions);
+  uint16_t deltaTime = (uint16_t)(eventTime1024 - lastEventTime);
+  if ((deltaRevolutions > 0) && (deltaTime > 0) && (deltaRevolutions < 100)) {
+    cadence = deltaRevolutions * 60.0 * 1024.0 / deltaTime;
+    if (cadence > 250) {
+      cadence = 250;
+    }
+    lastRevolutions = revolutions;
+    lastEventTime = eventTime1024;
+    lastChangeMs = nowMs;
+  } else if (deltaRevolutions >= 100) {
+    // implausible jump (e.g. sensor restart), resynchronise
+    lastRevolutions = revolutions;
+    lastEventTime = eventTime1024;
+    lastChangeMs = nowMs;
+  }
+  return current(nowMs);
+}
+
+double CrankCadence::current(uint32_t nowMs) const {
+  if (!initialised || (nowMs - lastChangeMs > timeoutMs)) {
+    return 0;
+  }
+  return cadence;
+}
+
+void CrankCadence::reset() {
+  initialised = false;
+  cadence = 0;
+}
+
+std::string toHex(const uint8_t* data, size_t length) {
+  static const char digits[] = "0123456789ABCDEF";
+  std::string text;
+  for (size_t index = 0; index < length; index++) {
+    if (index > 0) text += ' ';
+    text += digits[data[index] >> 4];
+    text += digits[data[index] & 0x0F];
+  }
+  return text;
+}
+
+// ---------------------------------------------------------------------------
 // FE-C over BLE
 // ---------------------------------------------------------------------------
 

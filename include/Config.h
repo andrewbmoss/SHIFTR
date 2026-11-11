@@ -23,6 +23,8 @@
 #define TRAINER_COMMAND_KEEPALIVE_INTERVAL 5000 // ms after which the last command is re-sent
 #define TRAINER_CONTROL_RETRY_INTERVAL 2000     // ms between FTMS "request control" attempts
 #define TRAINER_CONTROL_INDICATION_TIMEOUT 1000 // ms to wait for the FTMS control response
+#define TRAINER_DATA_TIMEOUT 3000               // ms without trainer data before NOMINAL_CADENCE is used
+#define NOMINAL_CADENCE 85                      // rpm assumed for virtual shifting when the trainer sends no data
 
 // Function button (re-pair / reboot), active low with internal pull-up
 #define FUNCTION_BUTTON_PIN 4

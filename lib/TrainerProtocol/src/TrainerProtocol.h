@@ -10,6 +10,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 namespace TrainerProtocol {
@@ -90,6 +91,39 @@ struct ResistanceLevelRange {
 bool parseResistanceLevelRange(const uint8_t* data, size_t length, ResistanceLevelRange& result);
 
 // ---------------------------------------------------------------------------
+// Cycling Power Service (0x1818), Cycling Power Measurement (0x2A63)
+// ---------------------------------------------------------------------------
+struct CyclingPowerData {
+  int16_t powerWatts = 0;
+  bool hasCrank = false;
+  uint16_t crankRevolutions = 0;   // cumulative, wraps at 65536
+  uint16_t crankEventTime = 0;     // 1/1024 s, wraps
+  bool hasWheel = false;
+  uint32_t wheelRevolutions = 0;   // cumulative
+  uint16_t wheelEventTime = 0;     // 1/2048 s, wraps
+};
+bool parseCyclingPowerMeasurement(const uint8_t* data, size_t length, CyclingPowerData& result);
+
+// Turns cumulative crank revolutions + event times into RPM.
+// Holds the last value between events and drops to 0 when no new revolution arrives for a while.
+class CrankCadence {
+ public:
+  explicit CrankCadence(uint32_t timeoutMs = 3000) : timeoutMs(timeoutMs) {}
+  // returns the current cadence in RPM
+  double update(uint16_t revolutions, uint16_t eventTime1024, uint32_t nowMs);
+  double current(uint32_t nowMs) const;
+  void reset();
+
+ private:
+  uint32_t timeoutMs;
+  bool initialised = false;
+  uint16_t lastRevolutions = 0;
+  uint16_t lastEventTime = 0;
+  uint32_t lastChangeMs = 0;
+  double cadence = 0;
+};
+
+// ---------------------------------------------------------------------------
 // FE-C over BLE
 // ---------------------------------------------------------------------------
 uint8_t fecChecksum(const std::vector<uint8_t>& message);
@@ -117,6 +151,9 @@ struct FECData {
 };
 // Parses a 13 byte FE-C over BLE message as notified on 6E40FEC2-...
 bool parseFECMessage(const uint8_t* data, size_t length, FECData& result);
+
+// Hex dump for diagnostics, e.g. "44 00 28 0A"
+std::string toHex(const uint8_t* data, size_t length);
 
 }  // namespace TrainerProtocol
 

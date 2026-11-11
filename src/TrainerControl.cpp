@@ -33,6 +33,25 @@ volatile uint32_t TrainerControl::lastDataAt = 0;
 
 static volatile bool capabilitiesRequestPending = false;
 
+// diagnostics and data source selection
+static volatile uint32_t packetsIndoorBikeData = 0;
+static volatile uint32_t packetsCyclingPower = 0;
+static volatile uint32_t packetsFEC = 0;
+static volatile uint32_t ibdPowerAt = 0;     // last non-zero power from FTMS Indoor Bike Data
+static volatile uint32_t ibdCadenceAt = 0;   // last non-zero cadence from FTMS Indoor Bike Data
+static CrankCadence cyclingPowerCadence;
+static bool startSent = false;
+static uint32_t lastSummaryAt = 0;
+static const uint32_t SOURCE_TIMEOUT = 3000;
+static const uint32_t RAW_DUMP_PACKETS = 3;
+
+static void dumpPacket(const char* source, volatile uint32_t& counter, const uint8_t* data, size_t length) {
+  counter++;
+  if (counter <= RAW_DUMP_PACKETS) {
+    log_i("Trainer %s packet %lu: %s", source, (unsigned long)counter, toHex(data, length).c_str());
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Connection lifecycle
 // ---------------------------------------------------------------------------
@@ -67,6 +86,17 @@ void TrainerControl::onConnected(bool hasFTMS, bool hasFEC) {
     BTDeviceManager::subscribeRemote(NimBLEUUID(TACX_FEC_PRIMARY_SERVICE_UUID), NimBLEUUID(TACX_FEC_READ_CHARACTERISTIC_UUID));
     capabilitiesRequestPending = true;
   }
+  // the power meter service is a second source for power and cadence (crank revolutions)
+  BTDeviceManager::subscribeRemote(NimBLEUUID(CYCLING_POWER_SERVICE_UUID), NimBLEUUID(CYCLING_POWER_MEASUREMENT_CHARACTERISTIC_UUID));
+
+  packetsIndoorBikeData = 0;
+  packetsCyclingPower = 0;
+  packetsFEC = 0;
+  ibdPowerAt = 0;
+  ibdCadenceAt = 0;
+  cyclingPowerCadence.reset();
+  startSent = false;
+  lastSummaryAt = millis();
 
   portENTER_CRITICAL(&lock);
   protocol = selected;
@@ -150,6 +180,14 @@ void TrainerControl::update() {
   }
   uint32_t now = millis();
 
+  if (now - lastSummaryAt > 10000) {
+    lastSummaryAt = now;
+    log_i("Trainer data: FTMS %lu, CPS %lu, FE-C %lu packets | power %u W, cadence %u rpm (%s), speed %.1f km/h | control %s | last command: %s",
+          (unsigned long)packetsIndoorBikeData, (unsigned long)packetsCyclingPower, (unsigned long)packetsFEC,
+          power, cadence, cadenceMeasured ? "measured" : "none", getSpeedMps() * 3.6,
+          hasControl() ? "yes" : "no", describe(lastSentCommand).c_str());
+  }
+
   if (protocol == TrainerProtocolType::FEC) {
     if (capabilitiesRequestPending) {
       capabilitiesRequestPending = false;
@@ -195,6 +233,14 @@ void TrainerControl::update() {
 
   // rate limit, coalesce and keep alive
   if (now - lastCommandSentAt < TRAINER_COMMAND_MIN_INTERVAL) {
+    return;
+  }
+  // FTMS "Start or Resume" once per connection: some trainers only stream data / apply sim after it
+  if ((protocol == TrainerProtocolType::FTMS) && !startSent) {
+    startSent = true;
+    lastCommandSentAt = now;
+    log_i("Sending FTMS start/resume");
+    sendFTMS(ftmsStartOrResume());
     return;
   }
   bool keepAliveDue = (now - lastCommandSentAt) > TRAINER_COMMAND_KEEPALIVE_INTERVAL;
@@ -261,18 +307,48 @@ bool TrainerControl::sendFEC(const std::vector<uint8_t>& data) {
 // ---------------------------------------------------------------------------
 
 void TrainerControl::onNotify(const NimBLEUUID& characteristicUUID, const uint8_t* data, size_t length) {
+  uint32_t now = millis();
   if (characteristicUUID.equals(NimBLEUUID(INDOOR_BIKE_DATA_CHARACTERISTIC_UUID))) {
+    dumpPacket("FTMS bike data", packetsIndoorBikeData, data, length);
     IndoorBikeData bikeData;
     if (parseIndoorBikeData(data, length, bikeData)) {
       if (bikeData.hasSpeed) speedMilliMps = (uint32_t)(bikeData.speedKph / 3.6 * 1000.0);
-      if (bikeData.hasCadence) {
+      if (bikeData.hasCadence && (bikeData.cadenceRpm > 0)) {
         cadence = (uint8_t)(bikeData.cadenceRpm > 255 ? 255 : bikeData.cadenceRpm);
         cadenceMeasured = true;
+        ibdCadenceAt = now;
+      } else if (bikeData.hasCadence && (now - ibdCadenceAt > SOURCE_TIMEOUT) && (cyclingPowerCadence.current(now) == 0)) {
+        cadence = 0;
       }
-      if (bikeData.hasPower) power = (uint16_t)(bikeData.powerWatts < 0 ? 0 : bikeData.powerWatts);
-      lastDataAt = millis();
+      if (bikeData.hasPower && (bikeData.powerWatts > 0)) {
+        power = (uint16_t)bikeData.powerWatts;
+        ibdPowerAt = now;
+      } else if (bikeData.hasPower && (now - ibdPowerAt > SOURCE_TIMEOUT) && (packetsCyclingPower == 0)) {
+        power = 0;
+      }
+      lastDataAt = now;
+    } else {
+      log_w("Could not parse FTMS bike data: %s", toHex(data, length).c_str());
+    }
+  } else if (characteristicUUID.equals(NimBLEUUID(CYCLING_POWER_MEASUREMENT_CHARACTERISTIC_UUID))) {
+    dumpPacket("power meter", packetsCyclingPower, data, length);
+    CyclingPowerData powerData;
+    if (parseCyclingPowerMeasurement(data, length, powerData)) {
+      // FTMS values win while they are non-zero, the power meter fills the gaps
+      if (now - ibdPowerAt > SOURCE_TIMEOUT) {
+        power = (uint16_t)(powerData.powerWatts < 0 ? 0 : powerData.powerWatts);
+      }
+      if (powerData.hasCrank) {
+        double crankCadence = cyclingPowerCadence.update(powerData.crankRevolutions, powerData.crankEventTime, now);
+        if (now - ibdCadenceAt > SOURCE_TIMEOUT) {
+          cadence = (uint8_t)round(crankCadence);
+          cadenceMeasured = true;
+        }
+      }
+      lastDataAt = now;
     }
   } else if (characteristicUUID.equals(NimBLEUUID(TACX_FEC_READ_CHARACTERISTIC_UUID))) {
+    dumpPacket("FE-C", packetsFEC, data, length);
     FECData fecData;
     if (parseFECMessage(data, length, fecData)) {
       if (fecData.hasSpeed) speedMilliMps = (uint32_t)(fecData.speedMps * 1000.0);
@@ -282,7 +358,7 @@ void TrainerControl::onNotify(const NimBLEUUID& characteristicUUID, const uint8_
       }
       if (fecData.hasPower) power = fecData.powerWatts;
       if (fecData.hasMaximumResistance) maximumResistance = fecData.maximumResistanceNewton;
-      lastDataAt = millis();
+      lastDataAt = now;
     }
   } else if (characteristicUUID.equals(NimBLEUUID(FITNESS_MACHINE_CONTROL_POINT_CHARACTERISTIC_UUID))) {
     handleControlPointResponse(data, length);
@@ -290,6 +366,7 @@ void TrainerControl::onNotify(const NimBLEUUID& characteristicUUID, const uint8_
     if ((length > 0) && ((data[0] == FTMS_STATUS_CONTROL_PERMISSION_LOST) || (data[0] == FTMS_STATUS_RESET))) {
       log_w("FTMS control lost (status 0x%02X), will request it again", data[0]);
       portENTER_CRITICAL(&lock);
+      startSent = false;
       controlGranted = false;
       controlRequestPending = false;
       commandDirty = (pendingCommand.type != CommandType::NONE);
@@ -405,4 +482,11 @@ uint32_t TrainerControl::getMillisSinceLastData() {
     return UINT32_MAX;
   }
   return millis() - lastDataAt;
+}
+
+String TrainerControl::getPacketSummary() {
+  char buffer[64];
+  snprintf(buffer, sizeof(buffer), "FTMS %lu / power meter %lu / FE-C %lu",
+           (unsigned long)packetsIndoorBikeData, (unsigned long)packetsCyclingPower, (unsigned long)packetsFEC);
+  return String(buffer);
 }

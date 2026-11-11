@@ -61,6 +61,8 @@ class TrainerControl {
   static bool isCadenceMeasured();
   static uint16_t getMaximumResistance();
   static uint32_t getMillisSinceLastData();
+  // packets received per source since connecting, for the status page
+  static String getPacketSummary();
 
  private:
   enum class CommandType : uint8_t { NONE, SIMULATION, TARGET_POWER, RESISTANCE };

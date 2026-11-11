@@ -17,6 +17,9 @@
 #include <ArduinoOTA.h>
 #include <TrainerControl.h>
 
+#define STR_HELPER(x) #x
+#define STR(x) STR_HELPER(x)
+
 void networkEvent(WiFiEvent_t event);
 void handleWebServerFile(const String& fileName);
 void handleWebServerStatus();
@@ -572,7 +575,7 @@ void handleWebServerDebug() {
 }
 // Live ride data for the status page, polled once per second
 void handleWebServerLive() {
-  char buffer[640];
+  char buffer[768];
   const char* zwiftMode = "SIM";
   switch (DirConManager::getZwiftTrainerMode()) {
     case TrainerMode::SIM_MODE_VIRTUAL_SHIFTING:
@@ -586,18 +589,22 @@ void handleWebServerLive() {
   }
   double defaultGearRatio = DirConManager::getDefaultGearRatio();
   uint32_t dataAge = TrainerControl::getMillisSinceLastData();
+  const char* cadenceSource = TrainerControl::isCadenceMeasured() ? "trainer" : "estimated from speed";
+  if (dataAge > TRAINER_DATA_TIMEOUT) {
+    cadenceSource = "no trainer data, shifting assumes " STR(NOMINAL_CADENCE) " rpm";
+  }
   snprintf(buffer, sizeof(buffer),
            "{\"trainer_connected\": %s, \"trainer_name\": \"%s\", \"protocol\": \"%s\", \"control\": %s, "
            "\"power\": %u, \"cadence\": %u, \"cadence_source\": \"%s\", \"speed_kph\": %.1f, \"data_age_ms\": %ld, "
            "\"zwift_clients\": %u, \"zwift_mode\": \"%s\", \"virtual_gear\": %d, \"gear_ratio\": %.2f, "
-           "\"zwift_grade\": %.2f, \"trainer_command\": \"%s\", \"blocked_writes\": %lu}",
+           "\"zwift_grade\": %.2f, \"trainer_command\": \"%s\", \"blocked_writes\": %lu, \"packets\": \"%s\"}",
            BTDeviceManager::isConnected() ? "true" : "false",
            BTDeviceManager::getConnecedDeviceName().c_str(),
            TrainerControl::getProtocolName(),
            TrainerControl::hasControl() ? "true" : "false",
            TrainerControl::getPower(),
            TrainerControl::getEffectiveCadence(defaultGearRatio),
-           TrainerControl::isCadenceMeasured() ? "trainer" : "estimated from speed",
+           cadenceSource,
            TrainerControl::getSpeedMps() * 3.6,
            dataAge == UINT32_MAX ? -1L : (long)dataAge,
            (unsigned)DirConManager::getConnectedClientCount(),
@@ -606,6 +613,7 @@ void handleWebServerLive() {
            DirConManager::getZwiftGearRatio(),
            DirConManager::getZwiftGradePercent(),
            TrainerControl::getLastCommandDescription().c_str(),
-           (unsigned long)DirConManager::getBlockedPassthroughWrites());
+           (unsigned long)DirConManager::getBlockedPassthroughWrites(),
+           TrainerControl::getPacketSummary().c_str());
   webServer.send(200, "application/json", buffer);
 }
