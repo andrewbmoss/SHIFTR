@@ -2,7 +2,7 @@
 SHIFTR bridge case for a WT32-ETH01 with soldered (bottom) headers.
 
 Two printed parts:
-  base  - open box with RJ45 slot, two board pillars, cable hole and zip-tie anchor
+  base  - open box with RJ45 slot, two board pillars and a DC-005 barrel jack window in the far end
   lid   - snap-fit lid with three tactile-switch pockets, LED hole and engraved labels
 
 Coordinates (mm): origin at the inside floor corner on the RJ45 end.
@@ -61,11 +61,14 @@ LED_HOLE = 5.1      # 5 mm LED, flange stops on the underside (use 3.1 for a 3 m
 LIP_T, LIP_H = 1.6, 4.0
 SNAP_R, SNAP_LEN, SNAP_Z = 0.5, 30.0, 41.5
 
-# ---------------------------------------------------------------- cable
-CABLE_HOLE = 6.0
-CABLE_Y, CABLE_Z = IN_W / 2, 7.0
-TIE_X0, TIE_LEN_X, TIE_SPAN_Y, TIE_H = 78.0, 5.0, 16.0, 5.0
-TIE_SLOT_W, TIE_SLOT_H = 3.5, 2.0
+# ---------------------------------------------------------------- power jack (DC-005, 5.5 x 2.1 mm)
+# The jack slides into a window in the far end wall from inside, its face flush with the outside.
+DC_L, DC_W, DC_H = 14.2, 9.0, 11.0   # body: depth (x) x width (y) x height (z); measure yours
+DC_Z0 = 4.5                          # jack bottom above the floor, leaves room for the solder tabs
+DC_Y = IN_W / 2                      # centred in the end wall
+DC_FIT = 0.15                        # window clearance per side
+DC_SUPPORT = 5.0                     # length of the shelf under the front of the jack (tabs are further back)
+DC_STOP_GAP = 0.3                    # gap between the jack's back and the stops
 
 
 def box(x0, y0, z0, x1, y1, z1):
@@ -89,12 +92,21 @@ def make_base():
     for px in (26.0, 50.0):
         base = base.union(box(px - 3, RJ_Y - 5, 0, px + 3, RJ_Y + 5, PILLAR_TOP))
 
-    # cable hole in the far end wall + zip-tie anchor (tie passes under the bar, around the cable)
-    base = base.cut(cyl_x(IN_L + WALL / 2, CABLE_Y, CABLE_Z, CABLE_HOLE / 2, WALL + 2))
-    anchor = box(TIE_X0, CABLE_Y - TIE_SPAN_Y / 2, 0, TIE_X0 + TIE_LEN_X, CABLE_Y + TIE_SPAN_Y / 2, TIE_H)
-    anchor = anchor.cut(box(TIE_X0 + (TIE_LEN_X - TIE_SLOT_W) / 2, CABLE_Y - TIE_SPAN_Y, 0,
-                            TIE_X0 + (TIE_LEN_X + TIE_SLOT_W) / 2, CABLE_Y + TIE_SPAN_Y, TIE_SLOT_H))
-    base = base.union(anchor)
+    # DC-005 barrel jack in the far end wall (opposite the RJ45)
+    front = IN_L + WALL                  # jack face flush with the outside of the wall
+    rear = front - DC_L
+    y0, y1 = DC_Y - DC_W / 2, DC_Y + DC_W / 2
+    # shelf under the front of the jack, clear of the solder tabs further back
+    base = base.union(box(IN_L - DC_SUPPORT, y0, 0, IN_L, y1, DC_Z0))
+    # side rails to keep it straight (and something for glue to grip)
+    for ry0, ry1 in ((y0 - DC_FIT - 1.6, y0 - DC_FIT), (y1 + DC_FIT, y1 + DC_FIT + 1.6)):
+        base = base.union(box(rear, ry0, 0, IN_L, ry1, DC_Z0 + 6.0))
+    # two stops behind the corners of the jack take the push of the plug; the middle stays open for the tabs
+    stop_x1 = rear - DC_STOP_GAP
+    for sy0, sy1 in ((y0, y0 + 2.0), (y1 - 2.0, y1)):
+        base = base.union(box(stop_x1 - 2.0, sy0, 0, stop_x1, sy1, DC_Z0 + DC_H * 0.7))
+    # the window itself
+    base = base.cut(box(IN_L, y0 - DC_FIT, DC_Z0 - DC_FIT, IN_L + WALL + 1, y1 + DC_FIT, DC_Z0 + DC_H + DC_FIT))
 
     # snap grooves for the lid ridges (long walls)
     for gy in (0.0, IN_W):
@@ -161,7 +173,7 @@ def make_dummies():
             s = cq.Workplane("XY").circle(2.5).extrude(9).translate((x, ITEM_Y, IN_H - 1))
         sw = s if sw is None else sw.union(s)
     parts["switches"] = sw
-    parts["cable"] = cyl_x(IN_L - 4, CABLE_Y, CABLE_Z, 2.0, 20)
+    parts["jack"] = box(IN_L + WALL - DC_L, DC_Y - DC_W / 2, DC_Z0, IN_L + WALL, DC_Y + DC_W / 2, DC_Z0 + DC_H)
     return parts
 
 

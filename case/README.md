@@ -14,7 +14,8 @@ Outside size with the lid on: **92.8 × 58.8 × 48.8 mm**. Two parts, no screws,
 
 ## What's in it
 
-- **Base**: an RJ45 slot open to the rim so the board drops straight in, and two pillars under the middle of the board. The pillars sit clear of the RJ45 solder pins and both header rows. Under the board there's 25 mm for the Dupont plugs and their wire bends. There's also a 6 mm cable hole in the far end and a zip-tie anchor in front of it for strain relief.
+- **Base**: an RJ45 slot open to the rim so the board drops straight in, and two pillars under the middle of the board. The pillars sit clear of the RJ45 solder pins and both header rows. Under the board there's 25 mm for the Dupont plugs and their wire bends.
+- **Power jack**: a window for a DC-005 barrel jack (5.5 × 2.1 mm) in the far end, opposite the RJ45. The jack slides in from inside with its face flush with the outside wall. It sits on a shelf under its front, between two side rails. Two stops behind its corners take the push when you plug in, leaving the middle free for the solder tabs.
 - **Lid**: a lip that drops inside the walls, plus snap ridges that click into grooves on the two long walls. A tab closes the RJ45 slot above the jack. Three 6 × 6 mm switch pockets and a 5 mm LED hole sit along one edge, beside the board, so nothing hangs over the RJ45. The labels are engraved 0.6 mm deep: **LED, FUNCTION, RESET, RECOVERY**.
 
 ## Printing
@@ -49,7 +50,7 @@ lid. Fix it with a drop of glue. For a 3 mm LED, set `LED_HOLE = 3.1`.
 1. Plug the Dupont wires onto the board (the wiring is in `WIRING.md` in the firmware project).
 2. Put a 1 mm double-sided foam tape pad on each pillar.
 3. Lower the board in with the RJ45 dropping into the end slot, and press it onto the tape.
-4. Feed the USB lead through the end hole, then zip-tie it to the anchor (the tie goes under the bar and around the cable).
+4. Solder two wires to the barrel jack: centre pin to the board's `5V`, sleeve to `GND`. Leave the third (switch) tab unconnected. Slide the jack into its window from inside until its face is flush with the outside, and fix it with hot glue along the rails.
 5. Wire the switches and LED in the lid, route the wires along the side walls, and press the lid on until it clicks.
 
 Leave the wires long enough that the lid can lie open beside the base.
@@ -59,3 +60,12 @@ Leave the wires long enough that the lid can lie open beside the base.
 - The board's headers point **down**, as in your "soldered pins" photo. With pins pointing up, the plugs would hit the lid.
 - The board measures about 55.5 × 25.5 mm, and the jack is about 16 mm wide and 13.5 mm tall, overhanging the board edge by about 4.5 mm. If your calipers disagree, change `PCB_*` / `RJ_*`.
 - The tactile switches are the common 6 × 6 mm type with a round 3.5 mm button.
+- The DC-005 jack body is 14.2 mm deep, 9.0 mm wide and 11.0 mm tall, with its solder tabs no more than 4.5 mm below it. These vary a little between makers. Measure yours and set `DC_L`, `DC_W`, `DC_H` and `DC_Z0` if they differ.
+
+## Power: 5 V only
+
+The barrel jack feeds the board's `5V` pin directly, with nothing in between. Use a
+**5 V** adapter only; a 9 or 12 V adapter will overheat the board's regulator.
+Before connecting the board, check the polarity with a multimeter: plug the adapter
+into the jack and confirm that the centre-pin tab reads +5 V against the sleeve tab.
+Most adapters are centre-positive, but not all.

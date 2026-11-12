@@ -91,7 +91,7 @@ def render(actors, name, pos, focal, up=(0, 0, 1), size=(1400, 1000), parallel=N
 base, lid = sc.make_base(), sc.make_lid()
 d = sc.make_dummies()
 bp, lp = poly(base), poly(lid, 0.02)
-ref = [poly(d[k]) for k in ("pcb", "rj45", "module", "dupont", "switches", "cable")]
+ref = [poly(d[k]) for k in ("pcb", "rj45", "module", "dupont", "switches", "jack")]
 grey, orange, green = (0.55, 0.58, 0.62), (0.93, 0.55, 0.28), (0.25, 0.65, 0.4)
 c = (sc.IN_L / 2, sc.IN_W / 2, sc.IN_H / 2)
 
@@ -140,5 +140,20 @@ render(acts, "view_section.png", (cut_x - 250, c[1], c[2]), (cut_x, c[1], c[2]),
 render([actor(bp, grey), edge_actor(bp), actor(lp, orange), edge_actor(lp), actor(ref[1], green)],
        "view_rj45_end.png", (-200, c[1] - 140, 110), (0, c[1], 22))
 render([actor(bp, grey), edge_actor(bp), actor(lp, orange), edge_actor(lp), actor(ref[5], (0.15, 0.15, 0.15))],
-       "view_cable_end.png", (sc.IN_L + 200, c[1] + 140, 110), (sc.IN_L, c[1], 22))
+       "view_jack_end.png", (sc.IN_L + 200, c[1] + 140, 110), (sc.IN_L, c[1], 22))
 print("rendered")
+
+# 6. inside close-up of the jack cradle: near side wall cut away
+jack_only = poly(d["jack"])
+cut_plane = vtk.vtkPlane()
+cut_plane.SetOrigin(0, sc.DC_Y - sc.DC_W / 2 - 4.0, 0)
+cut_plane.SetNormal(0, 1, 0)
+clipper = vtk.vtkClipPolyData()
+clipper.SetInputData(bp)
+clipper.SetClipFunction(cut_plane)
+clipper.Update()
+bp_cut = vtk.vtkPolyData()
+bp_cut.DeepCopy(clipper.GetOutput())
+render([actor(bp_cut, grey), edge_actor(bp_cut), actor(jack_only, (0.15, 0.15, 0.15)), edge_actor(jack_only)],
+       "view_jack_cradle.png", (sc.IN_L - 60, -70, 55), (sc.IN_L - 6, sc.DC_Y, 7), up=(0, 0, 1), parallel=16)
+print("rendered cradle")

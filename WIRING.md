@@ -16,8 +16,8 @@ leads in place with a rubber band for the one-time flash.
 
 | From | To | Notes |
 |---|---|---|
-| USB charger 5V | `5V` | Any phone charger, 1 A or more. The board has no USB port, so use a USB breakout or a cut cable. |
-| USB charger GND | `GND` | Any GND pin. |
+| Barrel jack centre pin | `5V` | DC-005 jack in the case, fed by a **5 V** adapter (1 A or more). Check the polarity with a multimeter first. |
+| Barrel jack sleeve | `GND` | Any GND pin. Leave the jack's third (switch) tab unconnected. |
 | Reset button | `EN` and `GND` | Tap to reboot. |
 | Function button | `IO4` and `GND` | Short press: drop and re-pair the trainer. Hold 5 s: reboot. |
 | Recovery button | `IO12` and `GND` | Hold while powering on: Wi-Fi access point with the *default* password. Use it if you lock yourself out of the web page. |
@@ -41,7 +41,7 @@ about 100 mA, and the ESP32 with the Ethernet PHY and Bluetooth needs more, so y
 get random resets or failed flashes. The CP2102's TX/RX lines are 3.3 V logic and
 are safe for the ESP32.
 
-Unplug the USB charger lead while the CP2102 is connected. Two 5 V sources on the
+Unplug the 5 V adapter while the CP2102 is connected. Two 5 V sources on the
 same pin can back-feed each other.
 
 The `IO0` pin is also the Ethernet clock input, so it only goes to GND for
