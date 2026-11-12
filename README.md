@@ -55,7 +55,7 @@ Prebuilt binaries are in `firmware/` if you'd rather not build. Flash
 
 ## First setup
 
-1. Disconnect the CP2102, connect Ethernet and the USB charger.
+1. Disconnect the CP2102, connect Ethernet and the 5 V adapter.
 2. Open `http://SHIFTR-xxxxxx.local` (the name is in the serial log), or use the IP address.
 3. Go to *Device settings*. User `admin`, password = the device name, e.g. `SHIFTR-123456`. Change it under *Configuration* afterwards.
 4. Set these, then *Save* (the device reboots):
