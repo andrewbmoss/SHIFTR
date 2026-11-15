@@ -280,6 +280,8 @@ bool TrainerControl::sendCommand(const Command& command) {
   if (protocol == TrainerProtocolType::FEC) {
     switch (command.type) {
       case CommandType::SIMULATION:
+        // set the trainer's air drag explicitly, otherwise it keeps its own default (0.51 kg/m)
+        sendFEC(fecWindResistance(command.value3));
         return sendFEC(fecTrackResistance(command.value1, command.value2));
       case CommandType::TARGET_POWER:
         return sendFEC(fecTargetPower(command.value1));

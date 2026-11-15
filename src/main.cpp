@@ -372,6 +372,10 @@ void handleWebServerSettings() {
   json += "\"difficulty\": ";
   json += SettingsManager::getDifficulty();
   json += ",";
+
+  json += "\"trainer_weight\": ";
+  json += SettingsManager::getTrainerWeight();
+  json += ",";
   
   json += "\"ftms_emulation\": ";
   if (SettingsManager::isFTMSEnabled()) {
@@ -384,6 +388,25 @@ void handleWebServerSettings() {
   json += "\"trainer_protocol\": ";
   json += (int)SettingsManager::getTrainerProtocolPreference();
   json += ",";
+
+  json += "\"gear_table\": ";
+  json += (int)SettingsManager::getGearTable();
+  json += ",";
+
+  std::map<size_t, std::string> gearTables = SettingsManager::getGearTables();
+  String gear_tables_json = "\"gear_tables\": [";
+  for (auto gearTable = gearTables.begin(); gearTable != gearTables.end(); gearTable++) {
+    gear_tables_json += "{\"name\": \"";
+    gear_tables_json += gearTable->second.c_str();
+    gear_tables_json += "\", \"value\": ";
+    gear_tables_json += gearTable->first;
+    gear_tables_json += "},";
+  }
+  if (gear_tables_json.endsWith(",")) {
+    gear_tables_json.remove(gear_tables_json.length() - 1);
+  }
+  gear_tables_json += "],";
+  json += gear_tables_json;
 
   std::map<size_t, std::string> protocols = SettingsManager::getTrainerProtocolPreferences();
   String protocols_json = "\"trainer_protocols\": [";
@@ -429,8 +452,14 @@ void handleWebServerSettingsPost() {
     } else {
       SettingsManager::setGradeSmoothingEnabled(false);
     }
+    if (webServer.hasArg("trainer_weight")) {
+      SettingsManager::setTrainerWeight(std::atoi(webServer.arg("trainer_weight").c_str()));
+    }
     if (webServer.hasArg("difficulty")) {
       SettingsManager::setDifficulty(std::atoi(webServer.arg("difficulty").c_str()));
+    }
+    if (webServer.hasArg("gear_table")) {
+      SettingsManager::setGearTable((VirtualGears::GearTable)std::atoi(webServer.arg("gear_table").c_str()));
     }
     if (webServer.hasArg("trainer_protocol")) {
       SettingsManager::setTrainerProtocolPreference((TrainerProtocolPreference)std::atoi(webServer.arg("trainer_protocol").c_str()));
@@ -606,7 +635,7 @@ void handleWebServerLive() {
   snprintf(buffer, sizeof(buffer),
            "{\"trainer_connected\": %s, \"trainer_name\": \"%s\", \"protocol\": \"%s\", \"control\": %s, "
            "\"power\": %u, \"cadence\": %u, \"cadence_source\": \"%s\", \"speed_kph\": %.1f, \"data_age_ms\": %ld, "
-           "\"zwift_clients\": %u, \"zwift_mode\": \"%s\", \"virtual_gear\": %d, \"gear_ratio\": %.2f, "
+           "\"zwift_clients\": %u, \"zwift_mode\": \"%s\", \"virtual_gear\": \"%s\", \"gear_ratio\": %.2f, \"model_power\": %.0f, "
            "\"zwift_grade\": %.2f, \"trainer_command\": \"%s\", \"blocked_writes\": %lu, \"packets\": \"%s\"}",
            BTDeviceManager::isConnected() ? "true" : "false",
            BTDeviceManager::getConnecedDeviceName().c_str(),
@@ -619,8 +648,9 @@ void handleWebServerLive() {
            dataAge == UINT32_MAX ? -1L : (long)dataAge,
            (unsigned)DirConManager::getConnectedClientCount(),
            zwiftMode,
-           DirConManager::getVirtualGear(),
-           DirConManager::getZwiftGearRatio(),
+           DirConManager::getVirtualGearLabel().c_str(),
+           DirConManager::getSimulatedGearRatio(),
+           DirConManager::getModelPower(),
            DirConManager::getZwiftGradePercent(),
            TrainerControl::getLastCommandDescription().c_str(),
            (unsigned long)DirConManager::getBlockedPassthroughWrites(),

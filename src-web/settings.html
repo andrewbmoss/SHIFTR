@@ -20,8 +20,10 @@
         let sprocketTeeth = document.getElementById('sprocket_teeth');
         let gradeSmoothing = document.getElementById('grade_smoothing');
         let difficulty = document.getElementById('difficulty');
+        let trainerWeight = document.getElementById('trainer_weight');
         let ftmsEmulation = document.getElementById('ftms_emulation');
         let trainerProtocol = document.getElementById('trainer_protocol');
+        let gearTable = document.getElementById('gear_table');
 
         fetch('/devicesettings', {
             method: 'GET',
@@ -39,6 +41,7 @@
                 sprocketTeeth.value = response.sprocket_teeth;
                 gradeSmoothing.checked = response.grade_smoothing;
                 difficulty.value = response.difficulty;
+                trainerWeight.value = response.trainer_weight;
                 ftmsEmulation.checked = response.ftms_emulation;
                 while (trainerDevice.options.length > 0) {
                     trainerDevice.remove(0);
@@ -63,6 +66,18 @@
                         element.selected = true;
                     }
                     virtualShiftingMode.add(element);
+                }
+                while (gearTable.options.length > 0) {
+                    gearTable.remove(0);
+                }
+                for (var index = 0; index < response.gear_tables.length; index++) {
+                    var element = document.createElement("option");
+                    element.textContent = response.gear_tables[index].name;
+                    element.value = response.gear_tables[index].value;
+                    if (response.gear_tables[index].value == response.gear_table) {
+                        element.selected = true;
+                    }
+                    gearTable.add(element);
                 }
                 while (trainerProtocol.options.length > 0) {
                     trainerProtocol.remove(0);
@@ -121,6 +136,12 @@
                         </select>
                     </div>
                     <div class="form-control">
+                        <label>Gear table:</label>
+                        <select id="gear_table" name="gear_table" onchange="enableSave()">
+                            <option id="-1" value=""></option>
+                        </select>
+                    </div>
+                    <div class="form-control">
                         <label>Trainer protocol:</label>
                         <select id="trainer_protocol" name="trainer_protocol" onchange="enableSave()">
                             <option id="-1" value=""></option>
@@ -157,7 +178,11 @@
                     </div>
                     <div class="form-control">
                         <label for="difficulty">Difficulty:</label>
-                        <input type="number" id="difficulty" name="difficulty" min="1" max="200" class="short" onchange="enableSave()"><span>&nbsp; %</span>
+                        <input type="number" id="difficulty" name="difficulty" min="1" max="200" class="short" onchange="enableSave()"><span>&nbsp; % of the grade</span>
+                      </div>
+                    <div class="form-control">
+                        <label for="trainer_weight">Trainer weight:</label>
+                        <input type="number" id="trainer_weight" name="trainer_weight" min="0" max="250" class="short" onchange="enableSave()"><span>&nbsp; kg (0 = Zwift weight)</span>
                       </div>
                     <div class="form-control">
                         <label>FTMS Emulation:</label>

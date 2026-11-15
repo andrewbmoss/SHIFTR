@@ -30,7 +30,10 @@ class DirConManager {
   static TrainerMode getZwiftTrainerMode();
   static double getZwiftGradePercent();
   static double getZwiftGearRatio();
-  static int getVirtualGear();
+  static double getSimulatedGearRatio();
+  static String getVirtualGearLabel();
+  // power the simulated bike needs at the current cadence, gear and grade
+  static double getModelPower();
   static size_t getConnectedClientCount();
   static uint32_t getBlockedPassthroughWrites();
   static double getDefaultGearRatio();

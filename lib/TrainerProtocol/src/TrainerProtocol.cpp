@@ -265,6 +265,13 @@ std::vector<uint8_t> fecTrackResistance(double gradePercent, double crr) {
   return fecMessage(0x4E, page);
 }
 
+std::vector<uint8_t> fecWindResistance(double cw) {
+  uint8_t coefficient = (uint8_t)std::lround(clamp(cw / 0.01, 0.0, 186.0));
+  // wind speed 127 = 0 km/h, drafting factor 100 = no drafting
+  const uint8_t page[8] = {0x32, 0xFF, 0xFF, 0xFF, 0xFF, coefficient, 127, 100};
+  return fecMessage(0x4E, page);
+}
+
 std::vector<uint8_t> fecBasicResistance(double percent) {
   uint8_t value = (uint8_t)std::lround(clamp(percent, 0.0, 100.0) * 2.0);
   const uint8_t page[8] = {0x30, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, value};

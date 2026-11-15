@@ -3,7 +3,7 @@
 
 // IoTWebConf configuration
 // identifier for EEPROM storage
-#define WIFI_CONFIG_VERSION "srs1"
+#define WIFI_CONFIG_VERSION "srs2"
 // when CONFIG_PIN is pulled to ground on startup, the device will use the initial password to build an AP
 #define WIFI_CONFIG_PIN IO12
 // status indicator pin, first it will light up (kept LOW), on Wifi connection it will blink, when connected to the Wifi it will turn off (kept HIGH)
@@ -14,6 +14,7 @@
 #include <IotWebConfUsing.h>
 #include <map>
 #include <TrainerControl.h>
+#include <VirtualGears.h>
 
 typedef enum VirtualShiftingMode {
   BASIC_RESISTANCE = 0,
@@ -30,6 +31,9 @@ class SettingsManager {
   static void setChainringTeeth(uint16_t chainringTeeth);
   static void setSprocketTeeth(uint16_t sprocketTeeth);
   static void setDifficulty(uint16_t difficulty);
+  // weight the trainer assumes when it turns a grade into force; 0 = same as Zwift's rider + bike
+  static uint16_t getTrainerWeight();
+  static void setTrainerWeight(uint16_t weight);
   static bool isVirtualShiftingEnabled();
   static bool isGradeSmoothingEnabled();
   static VirtualShiftingMode getVirtualShiftingMode();
@@ -47,6 +51,9 @@ class SettingsManager {
   static TrainerProtocolPreference getTrainerProtocolPreference();
   static void setTrainerProtocolPreference(TrainerProtocolPreference preference);
   static std::map<size_t, std::string> getTrainerProtocolPreferences();
+  static VirtualGears::GearTable getGearTable();
+  static void setGearTable(VirtualGears::GearTable gearTable);
+  static std::map<size_t, std::string> getGearTables();
 
  private:
   static char iotWebConfChainringTeethParameterValue[];
@@ -58,10 +65,14 @@ class SettingsManager {
   static char iotWebConfVirtualShiftingModeNames[][24];
   static char iotWebConfGradeSmoothingParameterValue[];
   static char iotWebConfDifficultyParameterValue[];
+  static char iotWebConfTrainerWeightParameterValue[];
   static char iotWebConfFTMSParameterValue[];
   static char iotWebConfTrainerProtocolParameterValue[];
   static char iotWebConfTrainerProtocolValues[][16];
   static char iotWebConfTrainerProtocolNames[][16];
+  static char iotWebConfGearTableParameterValue[];
+  static char iotWebConfGearTableValues[][24];
+  static char iotWebConfGearTableNames[][24];
   static IotWebConfParameterGroup iotWebConfSettingsGroup;
   static IotWebConfNumberParameter iotWebConfChainringTeethParameter;
   static IotWebConfNumberParameter iotWebConfSprocketTeethParameter;
@@ -70,8 +81,10 @@ class SettingsManager {
   static IotWebConfTextParameter iotWebConfTrainerDeviceParameter;
   static IotWebConfCheckboxParameter iotWebConfGradeSmoothingParameter;
   static IotWebConfNumberParameter iotWebConfDifficultyParameter;
+  static IotWebConfNumberParameter iotWebConfTrainerWeightParameter;
   static IotWebConfCheckboxParameter iotWebConfFTMSParameter;
   static IotWebConfSelectParameter iotWebConfTrainerProtocolParameter;
+  static IotWebConfSelectParameter iotWebConfGearTableParameter;
   static IotWebConf* iotWebConf;
 };
 

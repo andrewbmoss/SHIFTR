@@ -4,6 +4,7 @@
 #include <Calculations.h>
 #include <Logger.h>
 #include <TrainerProtocol.h>
+#include <VirtualGears.h>
 #include <unity.h>
 
 #include <cmath>
@@ -206,9 +207,114 @@ void test_geared_grade_increases_with_gear(void) {
 }
 
 void test_geared_grade_default_gear_on_flat(void) {
-  // in the physical gear on a flat road the trainer's own Crr/Cw do the work (SHIFTR's -1 % offset)
+  // physical gear = virtual gear on a flat road: the trainer must produce exactly the road force,
+  // all of it through the grade because the trainer is told Crr = Cw = 0
+  double v = Calculations::calculateSpeed(85, Calculations::wheelDiameter, defaultRatio);
+  double road = Calculations::calculateRoadForce(totalWeight, 0, v, 100);
   double grade = Calculations::calculateGearedGrade(totalWeight, 0.0, 85, defaultRatio, defaultRatio, 100);
-  TEST_ASSERT_DOUBLE_WITHIN(0.01, -1.0, grade);
+  TEST_ASSERT_DOUBLE_WITHIN(0.01, road, totalWeight * 9.81 * sin(atan(grade / 100.0)));
+}
+
+// force the trainer applies for a grade when told Crr = Cw = 0
+static double trainerForce(double gradePercent) {
+  return totalWeight * 9.81 * sin(atan(gradePercent / 100.0));
+}
+
+void test_pedal_torque_matches_real_bike(void) {
+  // On a real bike pedal torque ~ road force x gear ratio. On the trainer it is trainer force x
+  // physical ratio. These must be equal for every gear, grade and cadence (within clamping).
+  const double grades[] = {-4, 0, 2, 5, 8, 12};
+  const double cadences[] = {60, 85, 100};
+  const double physical[] = {34.0 / 14.0, 50.0 / 14.0};
+  for (double r0 : physical) {
+    for (double grade : grades) {
+      for (double cadence : cadences) {
+        for (int g = 0; g < 12; g++) {
+          double r = 50.0 / VirtualGears::AXS_COGS[g];
+          double v = Calculations::calculateSpeed(cadence, Calculations::wheelDiameter, r);
+          double real = Calculations::calculateRoadForce(totalWeight, grade, v, 100) * r;
+          double sent = Calculations::calculateGearedGrade(totalWeight, grade, cadence, r, r0, 100);
+          if (fabs(sent) >= 39.9) continue;  // clamped
+          TEST_ASSERT_DOUBLE_WITHIN(fabs(real) * 0.002 + 0.01, real, trainerForce(sent) * r0);
+        }
+      }
+    }
+  }
+}
+
+void test_gear_effect_includes_air_drag(void) {
+  // flat road, 85 rpm: one AXS shift 50x15 -> 50x14 is 7 % faster, so air drag (v^2) grows ~15 %
+  // and pedal torque by ~20 % on a real bike. Upstream only geared gravity + rolling (~ +13 %).
+  double r1 = 50.0 / 15, r2 = 50.0 / 14;
+  double f1 = trainerForce(Calculations::calculateGearedGrade(totalWeight, 0, 85, r1, defaultRatio, 100));
+  double f2 = trainerForce(Calculations::calculateGearedGrade(totalWeight, 0, 85, r2, defaultRatio, 100));
+  double v1 = Calculations::calculateSpeed(85, Calculations::wheelDiameter, r1);
+  double v2 = Calculations::calculateSpeed(85, Calculations::wheelDiameter, r2);
+  double expected = (Calculations::calculateRoadForce(totalWeight, 0, v2, 100) * r2) / (Calculations::calculateRoadForce(totalWeight, 0, v1, 100) * r1);
+  TEST_ASSERT_DOUBLE_WITHIN(0.002, expected, f2 / f1);
+  TEST_ASSERT_TRUE(f2 / f1 > 1.18);
+}
+
+void test_downhill_harder_gear_needs_less(void) {
+  // with a negative road force a harder gear must give a *more* negative trainer force (upstream divided)
+  double easy = Calculations::calculateGearedGrade(totalWeight, -8, 85, 50.0 / 28, defaultRatio, 100);
+  double hard = Calculations::calculateGearedGrade(totalWeight, -8, 85, 50.0 / 21, defaultRatio, 100);
+  TEST_ASSERT_TRUE(hard < easy);
+}
+
+void test_trainer_weight_conversion(void) {
+  // a trainer that assumes 70 kg needs a steeper grade for the same force
+  double own = Calculations::calculateGearedGrade(totalWeight, 4, 85, 50.0 / 17, defaultRatio, 100);
+  double light = Calculations::calculateGearedGrade(totalWeight, 4, 85, 50.0 / 17, defaultRatio, 100, 0.00415, 0.51, 0, 0, 70);
+  TEST_ASSERT_DOUBLE_WITHIN(0.01, totalWeight * sin(atan(own / 100.0)), 70 * sin(atan(light / 100.0)));
+}
+
+void test_wind_coefficient_units(void) {
+  // Cw in kg/m (air density x CdA): F = 0.5 Cw v^2
+  TEST_ASSERT_DOUBLE_WITHIN(1e-9, 0.5 * 0.51 * 100.0, Calculations::calculateWindResistance(10.0, 0, 0.51));
+  TEST_ASSERT_DOUBLE_WITHIN(1e-9, -0.5 * 0.51 * 4.0, Calculations::calculateWindResistance(-2.0, 0, 0.51));
+}
+
+void test_axs_mapper_tracks_steps(void) {
+  VirtualGears::GearMapper mapper;
+  mapper.setTable(VirtualGears::GearTable::AXS_50_10_32);
+  // Zwift gear 12 (2.40) starts on AXS gear 6 = 50x17
+  TEST_ASSERT_DOUBLE_WITHIN(1e-9, 50.0 / 17, mapper.map(2.40));
+  TEST_ASSERT_EQUAL_INT(6, mapper.getGear());
+  TEST_ASSERT_EQUAL_STRING("50x17 (6/12)", mapper.getLabel().c_str());
+  // one Zwift step up = one cog
+  TEST_ASSERT_DOUBLE_WITHIN(1e-9, 50.0 / 15, mapper.map(2.61));
+  // same ratio again (e.g. weight update) = no change
+  TEST_ASSERT_DOUBLE_WITHIN(1e-9, 50.0 / 15, mapper.map(2.61));
+  // over-shift past the top: stays on 10T
+  double ratio = 0;
+  for (int i = 13; i < 24; i++) ratio = mapper.map(VirtualGears::ZWIFT_RATIOS[i]);
+  TEST_ASSERT_DOUBLE_WITHIN(1e-9, 5.0, ratio);
+  TEST_ASSERT_EQUAL_INT(12, mapper.getGear());
+  // first shift down acts immediately
+  TEST_ASSERT_DOUBLE_WITHIN(1e-9, 50.0 / 11, mapper.map(VirtualGears::ZWIFT_RATIOS[22]));
+  // bottom end
+  for (int i = 21; i >= 0; i--) ratio = mapper.map(VirtualGears::ZWIFT_RATIOS[i]);
+  TEST_ASSERT_DOUBLE_WITHIN(1e-9, 50.0 / 32, ratio);
+  TEST_ASSERT_DOUBLE_WITHIN(1e-9, 50.0 / 28, mapper.map(VirtualGears::ZWIFT_RATIOS[1]));
+}
+
+void test_zwift_mapper_passthrough(void) {
+  VirtualGears::GearMapper mapper;
+  TEST_ASSERT_DOUBLE_WITHIN(1e-9, 3.03, mapper.map(3.03));
+  TEST_ASSERT_EQUAL_INT(15, mapper.getGear());
+  TEST_ASSERT_EQUAL_STRING("15/24", mapper.getLabel().c_str());
+  TEST_ASSERT_EQUAL_INT(1, VirtualGears::zwiftGearIndex(0.70));
+  TEST_ASSERT_EQUAL_INT(24, VirtualGears::zwiftGearIndex(6.0));
+}
+
+void test_fec_wind_page(void) {
+  std::vector<uint8_t> data = fecWindResistance(0.0);
+  TEST_ASSERT_EQUAL_UINT8(0x32, data[4]);
+  TEST_ASSERT_EQUAL_UINT8(0, data[9]);
+  TEST_ASSERT_EQUAL_UINT8(127, data[10]);
+  TEST_ASSERT_EQUAL_UINT8(100, data[11]);
+  TEST_ASSERT_EQUAL_UINT8(51, fecWindResistance(0.51)[9]);
 }
 
 void test_geared_grade_never_nan_or_out_of_range(void) {
@@ -265,6 +371,14 @@ int main(int argc, char** argv) {
   RUN_TEST(test_parse_fec_stationary_bike_page);
   RUN_TEST(test_geared_grade_increases_with_gear);
   RUN_TEST(test_geared_grade_default_gear_on_flat);
+  RUN_TEST(test_pedal_torque_matches_real_bike);
+  RUN_TEST(test_gear_effect_includes_air_drag);
+  RUN_TEST(test_downhill_harder_gear_needs_less);
+  RUN_TEST(test_trainer_weight_conversion);
+  RUN_TEST(test_wind_coefficient_units);
+  RUN_TEST(test_axs_mapper_tracks_steps);
+  RUN_TEST(test_zwift_mapper_passthrough);
+  RUN_TEST(test_fec_wind_page);
   RUN_TEST(test_geared_grade_never_nan_or_out_of_range);
   RUN_TEST(test_geared_power_and_resistance_sane);
   RUN_TEST(test_cadence_estimate_round_trip);

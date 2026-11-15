@@ -30,6 +30,7 @@ Wiring and the first flash are in [WIRING.md](WIRING.md).
   fight. The *Blocked writes* counter on the status page shows if that ever happens.
 - **Web status page** now has a live *Ride* panel (power, cadence and its source,
   virtual gear, Zwift grade, what was sent to the trainer).
+- **Lifelike virtual shifting** (v1.5): see "Virtual shifting feel" below.
 - **Function button** on IO4: short press re-pairs the trainer, hold 5 s reboots.
 - **ArduinoOTA** in addition to the web firmware upload (`pio run -e wt32-eth01_ota -t upload`).
 - Bigger app partitions (`min_spiffs.csv`). The firmware is about 1.3 MB and no longer
@@ -38,6 +39,61 @@ Wiring and the first flash are in [WIRING.md](WIRING.md).
   field in the settings page was never saved, FTMS emulation passed Crr in the wrong
   units, and grade calculation could produce NaN at extreme gears.
 - Uses the maintained `esp32async/AsyncTCP` fork, and all library versions are pinned.
+
+## Virtual shifting feel (v1.5)
+
+The goal is that every gear and every grade feels like a real bike: pedal torque at a
+given cadence equals *road force × gear ratio*, where road force is gravity, rolling
+resistance and air drag at the speed the virtual bike would go.
+
+Changes from upstream SHIFTR's physics:
+
+- **Air drag now scales with the gear.** Upstream multiplied only gravity and rolling
+  resistance by the gear ratio, so shifts did too little on the flat (about 15 % per
+  step instead of 20–40 %). Climbs also felt 2–3 times too strong compared with a shift.
+- **No more −1 % grade offset.** It made every road about 8 N (60–90 W) too easy, so a
+  hill was a much bigger jump from that lowered baseline than it should be.
+- **Downhill gearing fixed.** Negative forces were divided by the gear ratio, so the
+  gear effect ran backwards on descents.
+- **The trainer gets the whole force as a grade, with Crr = Cw = 0.** FTMS trainers add
+  their own rolling resistance and air drag at *flywheel* speed. That speed has nothing
+  to do with the virtual bike's speed, and how they interpret Cw differs between makes
+  (up to about 100 W at 30 km/h). Setting both to 0 removes the trainer's own model from
+  the equation.
+- **Zwift's own Cw and Crr are used.** Zwift sends them with every grade update; upstream
+  ignored them.
+- **Gear table.** *Settings > Gear table* now has *SRAM AXS 50 × 10-32* (the default)
+  next to Zwift's 24 gears. Each Click press moves one cog (10 11 12 13 14 15 17 19 21
+  24 28 32), and presses past either end of the cassette do nothing, like a real
+  derailleur. Zwift's own gear number keeps counting, so trust the *Virtual gear* line on
+  the status page (e.g. `50x17 (6/12)`) instead. Zwift's 24 gears are 6–7 % apart in
+  the upper half; the AXS steps are 7–17 %.
+
+### Calibrating to the trainer
+
+The FTMS standard has no field for rider weight, so the trainer turns the grade into
+force using a weight of its own. The *Ride* panel shows the measured power next to
+*simulated bike needs … W*. Pedal steadily in one gear on a flat road for 20–30 s:
+
+- If both numbers roughly agree, there's nothing to do.
+- If the measured power is consistently a fixed share of the model, for example 85 %,
+  set *Trainer weight* to that share of your Zwift rider + bike weight (85 % of 84 kg
+  ≈ 71 kg). That scales everything evenly without changing how gears compare with hills.
+
+*Difficulty* now scales only the grade (like Zwift's trainer difficulty). Leave it at
+100 % for real-world hills.
+
+### Physical gear
+
+Set *Chainring* and *Sprocket* to the chainring your chain is actually on and 14 (the
+Cog). A smaller physical ratio (for example 34 × 14) keeps the flywheel slower. That
+gives the trainer more room at the easy end, but the hardest sprints may ask for steep
+trainer grades (around 30 %). A bigger ratio (50 × 14) does the opposite. If the easiest
+gears all feel the same, the trainer is at its minimum resistance: try a smaller
+chainring.
+
+**Note:** updating to v1.5 resets the device settings once, because new settings were
+added. Afterwards, pick the trainer and set the chainring again.
 
 ## Build and first flash (Windows)
 

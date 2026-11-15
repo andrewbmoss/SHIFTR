@@ -129,6 +129,8 @@ class CrankCadence {
 uint8_t fecChecksum(const std::vector<uint8_t>& message);
 // Page 49: target power in 0.25 W
 std::vector<uint8_t> fecTargetPower(double watts);
+// Page 50: wind resistance, Cw in 0.01 kg/m, no wind, no drafting
+std::vector<uint8_t> fecWindResistance(double cw);
 // Page 51: track resistance, grade in 0.01 % offset by -200 %, Crr in 5e-5
 std::vector<uint8_t> fecTrackResistance(double gradePercent, double crr = DEFAULT_CRR);
 // Page 48: basic resistance in 0.5 % steps (0..200)

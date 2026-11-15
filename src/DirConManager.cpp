@@ -11,6 +11,7 @@
 #include <Calculations.h>
 #include <FTMS.h>
 #include <TrainerControl.h>
+#include <VirtualGears.h>
 
 ServiceManager *DirConManager::serviceManager{};
 Timer<> DirConManager::notificationTimer = timer_create_default();
@@ -37,9 +38,11 @@ int64_t DirConManager::smoothedZwiftGrade;
 bool DirConManager::zwiftProtocolActive = false;
 uint32_t DirConManager::blockedPassthroughWrites = 0;
 
-// Zwift's virtual gear table (ratio chainring:sprocket), used to show the gear number
-static const double zwiftGearRatios[] = {0.75, 0.87, 0.99, 1.11, 1.23, 1.38, 1.53, 1.68, 1.86, 2.04, 2.22, 2.40,
-                                         2.61, 2.82, 3.03, 3.24, 3.49, 3.74, 3.99, 4.24, 4.54, 4.84, 5.14, 5.49};
+// virtual drivetrain (Zwift's 24 gears or a real cassette) and Zwift's road model
+static VirtualGears::GearMapper gearMapper;
+static double zwiftCw = 0.51;        // kg/m (air density x CdA), sent by Zwift with every grade
+static double zwiftCrr = 0.00415;    // sent by Zwift with every grade
+static double modelPower = 0;        // power the simulated bike needs right now (W)
 
 uint16_t DirConManager::difficulty;
 
@@ -86,6 +89,11 @@ void DirConManager::resetValues() {
 
   smoothedZwiftGrade = 0;
   zwiftProtocolActive = false;
+  zwiftCw = Calculations::windResistanceCoefficient;
+  zwiftCrr = Calculations::rollingResistanceCoefficient;
+  modelPower = 0;
+  gearMapper.setTable(SettingsManager::getGearTable());
+  gearMapper.reset();
 
   difficulty = SettingsManager::getDifficulty();
 
@@ -512,6 +520,19 @@ bool DirConManager::processZwiftSyncRequest(Service *service, Characteristic *ch
               smoothedZwiftGrade += zwiftGrade;
               smoothedZwiftGrade = smoothedZwiftGrade / 2;
             }
+            // e.g. [04 22 09 10 8D 01 18 EC 27 20 90 03]: 0x18 = Cw x 10000 (5100 = 0.51 kg/m), 0x20 = Crr x 100000 (400 = 0.004)
+            if (requestValues.find(0x18) != requestValues.end()) {
+              double cw = requestValues.at(0x18) / 10000.0;
+              if ((cw > 0.05) && (cw < 2.0)) {
+                zwiftCw = cw;
+              }
+            }
+            if (requestValues.find(0x20) != requestValues.end()) {
+              double crr = requestValues.at(0x20) / 100000.0;
+              if ((crr > 0.0005) && (crr < 0.05)) {
+                zwiftCrr = crr;
+              }
+            }
             updateSIMModeResistance();
             break;
 
@@ -519,6 +540,10 @@ bool DirConManager::processZwiftSyncRequest(Service *service, Characteristic *ch
           case 0x2A:
             if (requestValues.find(0x10) != requestValues.end()) {
               zwiftGearRatio = requestValues.at(0x10);
+              if (zwiftGearRatio != 0) {
+                gearMapper.map(zwiftGearRatio / 10000.0);
+                log_i("Virtual gear %s (Zwift ratio %.2f -> simulated %.2f)", gearMapper.getLabel().c_str(), zwiftGearRatio / 10000.0, gearMapper.getRatio());
+              }
             }
             if (zwiftGearRatio == 0) {
               newZwiftTrainerMode = TrainerMode::SIM_MODE;
@@ -584,24 +609,31 @@ void DirConManager::updateSIMModeResistance() {
   double grade = (SettingsManager::isGradeSmoothingEnabled() ? smoothedZwiftGrade : zwiftGrade) / 100.0;
   // normal SIM mode w/o virtual shifting: just pass the grade on
   if (zwiftTrainerMode == TrainerMode::SIM_MODE) {
-    TrainerControl::setSimulation(zwiftGrade / 100.0);
+    TrainerControl::setSimulation(zwiftGrade / 100.0, zwiftCrr, zwiftCw);
+    modelPower = 0;
   } else if (zwiftTrainerMode == TrainerMode::SIM_MODE_VIRTUAL_SHIFTING) {
     double totalWeight = (zwiftBicycleWeight + zwiftUserWeight) / 100.0;
-    double gearRatio = zwiftGearRatio / 10000.0;
+    double gearRatio = gearMapper.getRatio();
+    if (gearRatio <= 0) {
+      gearRatio = gearMapper.map(zwiftGearRatio / 10000.0);
+    }
     uint8_t cadence = TrainerControl::getEffectiveCadence(defaultGearRatio);
     if (TrainerControl::getMillisSinceLastData() > TRAINER_DATA_TIMEOUT) {
       // no power/cadence from the trainer: shifting would only change the gravity part of the
       // resistance (almost nothing on the flat), so assume a typical cadence instead
       cadence = NOMINAL_CADENCE;
     }
+    modelPower = Calculations::calculateGearedPower(totalWeight, grade, cadence, gearRatio, defaultGearRatio, difficulty, zwiftCrr, zwiftCw);
 
     if (virtualShiftingMode == VirtualShiftingMode::TARGET_POWER) {
-      TrainerControl::setTargetPower(Calculations::calculateGearedPower(totalWeight, grade, cadence, gearRatio, defaultGearRatio, difficulty));
+      TrainerControl::setTargetPower(modelPower);
     } else if (virtualShiftingMode == VirtualShiftingMode::BASIC_RESISTANCE) {
-      TrainerControl::setResistancePercent(Calculations::calculateGearedResistancePercentage(totalWeight, grade, cadence, gearRatio, defaultGearRatio, TrainerControl::getMaximumResistance(), difficulty));
+      TrainerControl::setResistancePercent(Calculations::calculateGearedResistancePercentage(totalWeight, grade, cadence, gearRatio, defaultGearRatio, TrainerControl::getMaximumResistance(), difficulty, zwiftCrr, zwiftCw));
     } else {
-      // Track resistance: simulate the grade that makes the real gear feel like the virtual one
-      TrainerControl::setSimulation(Calculations::calculateGearedGrade(totalWeight, grade, cadence, gearRatio, defaultGearRatio, difficulty));
+      // Track resistance: the whole force goes into the grade and the trainer is told Crr = Cw = 0,
+      // so its own rolling/air model (unknown, and applied at flywheel speed) can't distort the feel
+      TrainerControl::setSimulation(Calculations::calculateGearedGrade(totalWeight, grade, cadence, gearRatio, defaultGearRatio, difficulty, zwiftCrr, zwiftCw, 0, 0,
+                                                                       SettingsManager::getTrainerWeight()), 0, 0);
     }
   }
 }
@@ -898,21 +930,19 @@ double DirConManager::getZwiftGearRatio() {
   return zwiftGearRatio / 10000.0;
 }
 
-int DirConManager::getVirtualGear() {
+double DirConManager::getSimulatedGearRatio() {
+  return (zwiftTrainerMode == TrainerMode::SIM_MODE_VIRTUAL_SHIFTING) ? gearMapper.getRatio() : 0;
+}
+
+String DirConManager::getVirtualGearLabel() {
   if ((zwiftTrainerMode != TrainerMode::SIM_MODE_VIRTUAL_SHIFTING) || (zwiftGearRatio == 0)) {
-    return 0;
+    return "-";
   }
-  double ratio = zwiftGearRatio / 10000.0;
-  int best = 0;
-  double bestDifference = 1000;
-  for (int index = 0; index < (int)(sizeof(zwiftGearRatios) / sizeof(zwiftGearRatios[0])); index++) {
-    double difference = fabs(zwiftGearRatios[index] - ratio);
-    if (difference < bestDifference) {
-      bestDifference = difference;
-      best = index + 1;
-    }
-  }
-  return best;
+  return String(gearMapper.getLabel().c_str());
+}
+
+double DirConManager::getModelPower() {
+  return modelPower;
 }
 
 size_t DirConManager::getConnectedClientCount() {

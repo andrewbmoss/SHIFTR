@@ -69,11 +69,11 @@
             .then(response => response.json())
             .then(live => {
                 setText('live_trainer', live.trainer_connected ? (live.trainer_name + ' via ' + live.protocol + (live.protocol == 'FTMS' ? (live.control ? ' (control granted)' : ' (no control yet)') : '')) : 'Not connected');
-                setText('live_power', live.power + ' W');
+                setText('live_power', live.power + ' W' + (live.model_power > 0 ? ' <small>(simulated bike needs ' + live.model_power + ' W)</small>' : ''));
                 setText('live_cadence', live.cadence + ' rpm <small>(' + live.cadence_source + ')</small>');
                 setText('live_speed', live.speed_kph.toFixed(1) + ' km/h');
                 setText('live_zwift', live.zwift_clients > 0 ? (live.zwift_mode + ', ' + live.zwift_clients + ' connection(s)') : 'Not connected');
-                setText('live_gear', live.virtual_gear > 0 ? (live.virtual_gear + ' / 24 <small>(ratio ' + live.gear_ratio.toFixed(2) + ')</small>') : '-');
+                setText('live_gear', live.virtual_gear != '-' ? (live.virtual_gear + ' <small>(ratio ' + live.gear_ratio.toFixed(2) + ')</small>') : '-');
                 setText('live_grade', live.zwift_grade.toFixed(1) + ' %');
                 setText('live_command', live.trainer_command);
                 setText('live_blocked', live.blocked_writes);

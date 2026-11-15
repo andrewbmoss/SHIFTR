@@ -9,10 +9,14 @@ char SettingsManager::iotWebConfVirtualShiftingParameterValue[16];
 char SettingsManager::iotWebConfTrainerDeviceParameterValue[128];
 char SettingsManager::iotWebConfGradeSmoothingParameterValue[16];
 char SettingsManager::iotWebConfDifficultyParameterValue[16];
+char SettingsManager::iotWebConfTrainerWeightParameterValue[16];
 char SettingsManager::iotWebConfFTMSParameterValue[16];
 char SettingsManager::iotWebConfTrainerProtocolParameterValue[16];
 char SettingsManager::iotWebConfTrainerProtocolValues[][16] = { "auto", "ftms", "fec" };
 char SettingsManager::iotWebConfTrainerProtocolNames[][16] = { "Auto (FTMS)", "FTMS", "FE-C" };
+char SettingsManager::iotWebConfGearTableParameterValue[24];
+char SettingsManager::iotWebConfGearTableValues[][24] = { "zwift", "axs_50_10_32" };
+char SettingsManager::iotWebConfGearTableNames[][24] = { "Zwift (24 gears)", "SRAM AXS 50 x 10-32" };
 
 char SettingsManager::iotWebConfVirtualShiftingModeValues[][24] = { "basic_resistance", "target_power", "track_resistance" };
 char SettingsManager::iotWebConfVirtualShiftingModeNames[][24] = { "Basic Resistance", "Target Power", "Track Resistance" };
@@ -24,10 +28,13 @@ IotWebConfSelectParameter SettingsManager::iotWebConfVirtualShiftingModeParamete
 IotWebConfCheckboxParameter SettingsManager::iotWebConfVirtualShiftingParameter = IotWebConfCheckboxParameter("Virtual shifting", "virtual_shifting", SettingsManager::iotWebConfVirtualShiftingParameterValue, sizeof(iotWebConfVirtualShiftingParameterValue), true);
 IotWebConfTextParameter SettingsManager::iotWebConfTrainerDeviceParameter = IotWebConfTextParameter("Trainer device", "trainer_device", iotWebConfTrainerDeviceParameterValue, sizeof(iotWebConfTrainerDeviceParameterValue), "");
 IotWebConfCheckboxParameter SettingsManager::iotWebConfGradeSmoothingParameter = IotWebConfCheckboxParameter("Grade smoothing", "grade_smoothing", SettingsManager::iotWebConfGradeSmoothingParameterValue, sizeof(iotWebConfGradeSmoothingParameterValue), true);
+IotWebConfNumberParameter SettingsManager::iotWebConfTrainerWeightParameter("Trainer weight", "trainer_weight", SettingsManager::iotWebConfTrainerWeightParameterValue, sizeof(iotWebConfTrainerWeightParameterValue), "0", "0..250", "min='0' max='250' step='1'");
 IotWebConfNumberParameter SettingsManager::iotWebConfDifficultyParameter("Difficulty", "difficulty", SettingsManager::iotWebConfDifficultyParameterValue, sizeof(iotWebConfDifficultyParameterValue), "100", "1..200", "min='1' max='200' step='1'");
 IotWebConfCheckboxParameter SettingsManager::iotWebConfFTMSParameter = IotWebConfCheckboxParameter("FTMS Emulation", "ftms_emulation", SettingsManager::iotWebConfFTMSParameterValue, sizeof(iotWebConfFTMSParameterValue), false);
 
 IotWebConfSelectParameter SettingsManager::iotWebConfTrainerProtocolParameter = IotWebConfSelectParameter("Trainer protocol", "trainer_protocol", SettingsManager::iotWebConfTrainerProtocolParameterValue, sizeof(iotWebConfTrainerProtocolParameterValue), (char*)iotWebConfTrainerProtocolValues, (char*)iotWebConfTrainerProtocolNames, sizeof(iotWebConfTrainerProtocolValues) / sizeof(iotWebConfTrainerProtocolParameterValue), sizeof(iotWebConfTrainerProtocolParameterValue), "auto");
+
+IotWebConfSelectParameter SettingsManager::iotWebConfGearTableParameter = IotWebConfSelectParameter("Gear table", "gear_table", SettingsManager::iotWebConfGearTableParameterValue, sizeof(iotWebConfGearTableParameterValue), (char*)iotWebConfGearTableValues, (char*)iotWebConfGearTableNames, sizeof(iotWebConfGearTableValues) / sizeof(iotWebConfGearTableParameterValue), sizeof(iotWebConfGearTableParameterValue), "axs_50_10_32");
 
 IotWebConf* SettingsManager::iotWebConf;
 
@@ -40,8 +47,10 @@ void SettingsManager::initialize(IotWebConf* iotWebConf) {
   iotWebConfSettingsGroup.addItem(&iotWebConfVirtualShiftingModeParameter);
   iotWebConfSettingsGroup.addItem(&iotWebConfGradeSmoothingParameter);
   iotWebConfSettingsGroup.addItem(&iotWebConfDifficultyParameter);
+  iotWebConfSettingsGroup.addItem(&iotWebConfTrainerWeightParameter);
   iotWebConfSettingsGroup.addItem(&iotWebConfFTMSParameter);
   iotWebConfSettingsGroup.addItem(&iotWebConfTrainerProtocolParameter);
+  iotWebConfSettingsGroup.addItem(&iotWebConfGearTableParameter);
 }
 
 VirtualShiftingMode SettingsManager::getVirtualShiftingMode() {
@@ -155,6 +164,19 @@ uint16_t SettingsManager::getDifficulty() {
   return difficulty;
 }
 
+uint16_t SettingsManager::getTrainerWeight() {
+  int weight = atoi(iotWebConfTrainerWeightParameterValue);
+  if ((weight < 0) || (weight > 250)) {
+    weight = 0;
+  }
+  return (uint16_t)weight;
+}
+
+void SettingsManager::setTrainerWeight(uint16_t weight) {
+  std::string weightString = std::to_string(weight > 250 ? 0 : weight);
+  strncpy(iotWebConfTrainerWeightParameterValue, weightString.c_str(), sizeof(iotWebConfTrainerWeightParameterValue));
+}
+
 void SettingsManager::setDifficulty(uint16_t difficulty) {
   std::string difficultyString = std::to_string(difficulty);
   strncpy(iotWebConfDifficultyParameterValue, difficultyString.c_str(), sizeof(iotWebConfDifficultyParameterValue));
@@ -194,6 +216,29 @@ std::map<size_t, std::string> SettingsManager::getTrainerProtocolPreferences() {
   std::map<size_t, std::string> returnMap;
   for (size_t index = 0; index < (sizeof(iotWebConfTrainerProtocolValues) / sizeof(iotWebConfTrainerProtocolParameterValue)); index++) {
     returnMap.emplace(index, iotWebConfTrainerProtocolNames[index]);
+  }
+  return returnMap;
+}
+
+VirtualGears::GearTable SettingsManager::getGearTable() {
+  if (strncmp(iotWebConfGearTableParameterValue, iotWebConfGearTableValues[0], sizeof(iotWebConfGearTableParameterValue)) == 0) {
+    return VirtualGears::GearTable::ZWIFT;
+  }
+  return VirtualGears::GearTable::AXS_50_10_32;
+}
+
+void SettingsManager::setGearTable(VirtualGears::GearTable gearTable) {
+  size_t index = (size_t)gearTable;
+  if (index > 1) {
+    index = 1;
+  }
+  strncpy(iotWebConfGearTableParameterValue, iotWebConfGearTableValues[index], sizeof(iotWebConfGearTableParameterValue));
+}
+
+std::map<size_t, std::string> SettingsManager::getGearTables() {
+  std::map<size_t, std::string> returnMap;
+  for (size_t index = 0; index < (sizeof(iotWebConfGearTableValues) / sizeof(iotWebConfGearTableParameterValue)); index++) {
+    returnMap.emplace(index, iotWebConfGearTableNames[index]);
   }
   return returnMap;
 }

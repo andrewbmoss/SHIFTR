@@ -40,8 +40,9 @@ double Calculations::calculateRollingResistance(double totalWeight) {
  * @param windSpeed Speed of wind in m/s (positive for headwind, negative for tailwind)
  * @return Wind resistance in N
  */
-double Calculations::calculateWindResistance(double bicycleSpeed, double windSpeed) {
-  double windResistance = 0.5 * windResistanceCoefficient * pow(bicycleSpeed + windSpeed, 2);
+double Calculations::calculateWindResistance(double bicycleSpeed, double windSpeed, double windCoefficient) {
+  double relativeSpeed = bicycleSpeed + windSpeed;
+  double windResistance = 0.5 * windCoefficient * relativeSpeed * fabs(relativeSpeed);
   log_d("Wind resistance: %f", windResistance);
   return windResistance;
 }
@@ -57,25 +58,27 @@ double Calculations::calculateWindResistance(double bicycleSpeed, double windSpe
  * @param difficulty Difficulty in percentage (0-200%)
  * @return Total resistance in N
  */
-double Calculations::calculateGearedResistance(double totalWeight, double grade, double speed, double gearRatio, double defaultGearRatio, uint16_t difficulty) {
-  // calculate the relative gear ratio
+double Calculations::calculateGearedResistance(double totalWeight, double grade, double speed, double gearRatio, double defaultGearRatio, uint16_t difficulty, double rollingCoefficient, double windCoefficient) {
+  // Pedal torque on a real bike is road force x gear ratio. The trainer's force acts through the
+  // physical gear, so it must be road force x (virtual ratio / physical ratio) - for every part of
+  // the road force, air drag included, and for negative (downhill) forces too.
   double relativeGearRatio = calculateRelativeGearRatio(gearRatio, defaultGearRatio);
-
-  // calculate the wind resistance based on speed and gear ratio
-  double windResistance = calculateWindResistance(speed, 0);
-
-  // calculate the gravitational and rolling resistance 
-  double gravitationalResistance = calculateGravitationalResistance(totalWeight, grade);
-  double rollingResistance = calculateRollingResistance(totalWeight);
-
-  // apply the difficulty to the gravitational and wind resistance
-  gravitationalResistance = gravitationalResistance * (difficulty / 100.0);
-  windResistance = windResistance * (difficulty / 100.0);
-
-  // calculate the geared total resistance (that would apply with the specified gear ratio)
-  double gearedTotalResistance = calculateGearedValue(gravitationalResistance + rollingResistance, relativeGearRatio) + windResistance;
-  log_d("Geared resistance: %fN (gravitational: %fN, rolling: %fN, wind: %fN, speed: %fm/s = %fkm/h, difficulty: %d)", gearedTotalResistance, gravitationalResistance, rollingResistance, windResistance, speed, speed * 3.6, difficulty);
+  double roadForce = calculateRoadForce(totalWeight, grade, speed, difficulty, rollingCoefficient, windCoefficient);
+  double gearedTotalResistance = roadForce * relativeGearRatio;
+  log_d("Geared resistance: %fN (road force %fN x %f, speed %f km/h, difficulty %d)", gearedTotalResistance, roadForce, relativeGearRatio, speed * 3.6, difficulty);
   return gearedTotalResistance;
+}
+
+/**
+ * Force on a real bike riding at the given speed (N): gravity (scaled by difficulty, like
+ * Zwift's trainer difficulty), rolling resistance and air drag.
+ */
+double Calculations::calculateRoadForce(double totalWeight, double grade, double speed, uint16_t difficulty, double rollingCoefficient, double windCoefficient) {
+  double angle = atan(grade / 100.0);
+  double gravitational = gravity * totalWeight * sin(angle) * (difficulty / 100.0);
+  double rolling = gravity * totalWeight * rollingCoefficient * cos(angle);
+  double wind = calculateWindResistance(speed, 0, windCoefficient);
+  return gravitational + rolling + wind;
 }
 
 /**
@@ -167,10 +170,8 @@ double Calculations::calculateSpeed(double cadence, double wheelDiameter, double
  * @return Geared value (unit as original value)
  */
 double Calculations::calculateGearedValue(double originalValue, double gearRatio) {
+  // multiply for both signs: dividing negative values (as upstream did) inverted the gear effect downhill
   double gearedValue = originalValue * gearRatio;
-  if (originalValue < 0) {
-    gearedValue = originalValue * (1 / gearRatio);
-  }
   log_d("Original / Ratio / Geared: %f / %f / %f", originalValue, gearRatio, gearedValue);
   return gearedValue;
 }
@@ -191,27 +192,29 @@ double Calculations::calculateRelativeGearRatio(double gearRatio, double default
  * Calculates the grade that has to be simulated on the trainer so that the
  * real (fixed) gear feels like the requested virtual gear.
  *
+ * The trainer is assumed to apply F = m g sin(atan(grade)) + m g trainerCrr + 0.5 trainerCw v^2 at its
+ * own flywheel speed. With trainerCrr = trainerCw = 0 (the default, and what the bridge sends) the
+ * whole force is carried by the grade, so the trainer's own rolling/air model can't distort it.
+ *
  * @return Grade in percent, clamped to [-40, 40]
  */
-double Calculations::calculateGearedGrade(double totalWeight, double grade, double cadence, double gearRatio, double defaultGearRatio, uint16_t difficulty) {
-  // speed in the virtual gear and in the real gear
+double Calculations::calculateGearedGrade(double totalWeight, double grade, double cadence, double gearRatio, double defaultGearRatio, uint16_t difficulty,
+                                          double rollingCoefficient, double windCoefficient, double trainerRollingCoefficient, double trainerWindCoefficient,
+                                          double trainerWeight) {
+  // weight the trainer uses to turn our grade back into force (FTMS has no weight field)
+  double conversionWeight = (trainerWeight > 0) ? trainerWeight : totalWeight;
   double speed = calculateSpeed(cadence, wheelDiameter, gearRatio);
   double realSpeed = calculateSpeed(cadence, wheelDiameter, defaultGearRatio);
-
-  // the trainer adds rolling and wind resistance itself, so remove them again
-  double windResistance = calculateWindResistance(realSpeed, 0) * (difficulty / 100.0);
-  double rollingResistance = calculateRollingResistance(totalWeight);
-  double gearedTotalResistance = calculateGearedResistance(totalWeight, grade, speed, gearRatio, defaultGearRatio, difficulty);
-  double theoreticalGravitationalResistance = gearedTotalResistance - windResistance - rollingResistance;
-
-  double sine = theoreticalGravitationalResistance / totalWeight / gravity;
+  double trainerForce = calculateGearedResistance(totalWeight, grade, speed, gearRatio, defaultGearRatio, difficulty, rollingCoefficient, windCoefficient);
+  double trainerOwnForce = gravity * conversionWeight * trainerRollingCoefficient + calculateWindResistance(realSpeed, 0, trainerWindCoefficient);
+  double sine = (trainerForce - trainerOwnForce) / conversionWeight / gravity;
   if (sine > 0.99) sine = 0.99;
   if (sine < -0.99) sine = -0.99;
-  double calculatedGrade = (tan(asin(sine)) * 100) - 1;
+  double calculatedGrade = tan(asin(sine)) * 100;
   if (std::isnan(calculatedGrade)) calculatedGrade = 0;
   if (calculatedGrade > 40) calculatedGrade = 40;
   if (calculatedGrade < -40) calculatedGrade = -40;
-  log_d("Geared grade: %f%% (requested %f%%)", calculatedGrade, grade);
+  log_d("Geared grade: %f%% (Zwift %f%%, trainer force %fN)", calculatedGrade, grade, trainerForce);
   return calculatedGrade;
 }
 
@@ -220,11 +223,10 @@ double Calculations::calculateGearedGrade(double totalWeight, double grade, doub
  *
  * @return Power in W (>= 0)
  */
-double Calculations::calculateGearedPower(double totalWeight, double grade, double cadence, double gearRatio, double defaultGearRatio, uint16_t difficulty) {
+double Calculations::calculateGearedPower(double totalWeight, double grade, double cadence, double gearRatio, double defaultGearRatio, uint16_t difficulty, double rollingCoefficient, double windCoefficient) {
+  // power of the virtual bike = road force x virtual speed (= trainer force x trainer speed)
   double speed = calculateSpeed(cadence, wheelDiameter, gearRatio);
-  double trainerSpeed = calculateSpeed(cadence, wheelDiameter, defaultGearRatio);
-  double gearedTotalResistance = calculateGearedResistance(totalWeight, grade, speed, gearRatio, defaultGearRatio, difficulty);
-  double power = gearedTotalResistance * trainerSpeed;
+  double power = calculateRoadForce(totalWeight, grade, speed, difficulty, rollingCoefficient, windCoefficient) * speed;
   if (power < 0 || std::isnan(power)) {
     power = 0;
   }
@@ -235,12 +237,12 @@ double Calculations::calculateGearedPower(double totalWeight, double grade, doub
  * Calculates the resistance percentage (0..100) of the trainer's maximum resistance.
  * If the maximum resistance is unknown (0) a default of 200N is assumed.
  */
-double Calculations::calculateGearedResistancePercentage(double totalWeight, double grade, double cadence, double gearRatio, double defaultGearRatio, uint16_t maximumResistance, uint16_t difficulty) {
+double Calculations::calculateGearedResistancePercentage(double totalWeight, double grade, double cadence, double gearRatio, double defaultGearRatio, uint16_t maximumResistance, uint16_t difficulty, double rollingCoefficient, double windCoefficient) {
   if (maximumResistance == 0) {
     maximumResistance = 200;
   }
   double speed = calculateSpeed(cadence, wheelDiameter, gearRatio);
-  double gearedTotalResistance = calculateGearedResistance(totalWeight, grade, speed, gearRatio, defaultGearRatio, difficulty);
+  double gearedTotalResistance = calculateGearedResistance(totalWeight, grade, speed, gearRatio, defaultGearRatio, difficulty, rollingCoefficient, windCoefficient);
   double percentage = gearedTotalResistance / maximumResistance * 100.0;
   if (percentage < 0 || std::isnan(percentage)) percentage = 0;
   if (percentage > 100) percentage = 100;
