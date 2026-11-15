@@ -54,8 +54,10 @@ Changes from upstream SHIFTR's physics:
   a real bike, and each +1 % of grade did 2–3 times as much as a shift (a real bike: 1–2.5).
 - **No more −1 % grade offset.** It made every road about 8 N (60–90 W) too easy, so a
   hill was a much bigger jump from that lowered baseline than it should be.
-- **Downhill gearing fixed.** Negative forces were divided by the gear ratio, so the
-  gear effect ran backwards on descents.
+- **Downhill gearing fixed.** Descents always got easier, but on a descent the hill's pull
+  was divided by the gear ratio instead of multiplied. So a harder gear passed *less* of the
+  pull to the pedals instead of more: too little help in hard gears, too much in easy ones.
+  The general "descents go light too soon" feel came from the offset and drag issues above.
 - **The trainer gets the whole force as a grade, with Crr = Cw = 0.** FTMS trainers add
   their own rolling resistance and air drag at *flywheel* speed. That speed has nothing
   to do with the virtual bike's speed, and how they interpret Cw differs between makes
