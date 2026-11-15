@@ -49,8 +49,9 @@ resistance and air drag at the speed the virtual bike would go.
 Changes from upstream SHIFTR's physics:
 
 - **Air drag now scales with the gear.** Upstream multiplied only gravity and rolling
-  resistance by the gear ratio, so shifts did too little on the flat (about 15 % per
-  step instead of 20–40 %). Climbs also felt 2–3 times too strong compared with a shift.
+  resistance by the gear ratio, so in the upper gears a shift on the flat did about 15 %
+  instead of 19 %. Together with the offset below, flat roads were only 45–75 % as hard as
+  a real bike, and each +1 % of grade did 2–3 times as much as a shift (a real bike: 1–2.5).
 - **No more −1 % grade offset.** It made every road about 8 N (60–90 W) too easy, so a
   hill was a much bigger jump from that lowered baseline than it should be.
 - **Downhill gearing fixed.** Negative forces were divided by the gear ratio, so the
@@ -58,7 +59,7 @@ Changes from upstream SHIFTR's physics:
 - **The trainer gets the whole force as a grade, with Crr = Cw = 0.** FTMS trainers add
   their own rolling resistance and air drag at *flywheel* speed. That speed has nothing
   to do with the virtual bike's speed, and how they interpret Cw differs between makes
-  (up to about 100 W at 30 km/h). Setting both to 0 removes the trainer's own model from
+  (around 100 W at a typical flywheel speed). Setting both to 0 removes the trainer's own model from
   the equation.
 - **Zwift's own Cw and Crr are used.** Zwift sends them with every grade update; upstream
   ignored them.
