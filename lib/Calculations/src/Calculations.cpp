@@ -219,6 +219,52 @@ double Calculations::calculateGearedGrade(double totalWeight, double grade, doub
 }
 
 /**
+ * Track resistance with air drag computed by the trainer.
+ *
+ * Pedal torque must equal road force x virtual ratio, i.e. the trainer force (acting through the
+ * physical ratio) must be rho x road force(virtual speed), rho = virtual / physical ratio.
+ *  - gravity + rolling don't depend on speed: rho x that goes into the grade
+ *  - air drag: rho x 0.5 Cw (rho v)^2 = 0.5 (Cw rho^3) v^2 with v = the trainer's own speed, so the
+ *    trainer can apply it itself from its flywheel speed. Computing it here instead (v1.5) closed a
+ *    loop through 1 Hz updates and ~2 s of delay, which oscillated in the big gears.
+ *  - whatever exceeds the protocol's Cw limit is added to the grade using the cadence.
+ */
+TrainerSimulation Calculations::calculateTrainerSimulation(double totalWeight, double grade, double cadence, double gearRatio, double defaultGearRatio, uint16_t difficulty,
+                                                           double rollingCoefficient, double windCoefficient, double maxTrainerWindCoefficient,
+                                                           double trainerWeight, double trainerSpeedFactor) {
+  TrainerSimulation result = {0, 0, 0};
+  double conversionWeight = (trainerWeight > 0) ? trainerWeight : totalWeight;
+  if (trainerSpeedFactor < 0.5 || trainerSpeedFactor > 2.0 || std::isnan(trainerSpeedFactor)) trainerSpeedFactor = 1.0;
+  double rho = calculateRelativeGearRatio(gearRatio, defaultGearRatio);
+  double realSpeed = calculateSpeed(cadence, wheelDiameter, defaultGearRatio);
+
+  // air drag: the trainer sees speed k x v, so it needs Cw rho^3 / k^2
+  double wanted = windCoefficient * rho * rho * rho / (trainerSpeedFactor * trainerSpeedFactor);
+  result.windCoefficient = wanted;
+  if (result.windCoefficient > maxTrainerWindCoefficient) result.windCoefficient = maxTrainerWindCoefficient;
+  if (result.windCoefficient < 0) result.windCoefficient = 0;
+  // both protocols carry Cw in 0.01 kg/m: round here so the (tiny) rounding error goes into the residual
+  result.windCoefficient = round(result.windCoefficient * 100.0) / 100.0;
+  if (result.windCoefficient > maxTrainerWindCoefficient) result.windCoefficient = floor(maxTrainerWindCoefficient * 100.0) / 100.0;
+  double trainerSpeed = realSpeed * trainerSpeedFactor;
+  result.residualForce = 0.5 * (wanted - result.windCoefficient) * trainerSpeed * trainerSpeed;
+
+  // gravity (x difficulty) + rolling, geared, plus the residual drag
+  double angle = atan(grade / 100.0);
+  double speedIndependent = rho * (gravity * totalWeight * sin(angle) * (difficulty / 100.0) + gravity * totalWeight * rollingCoefficient * cos(angle));
+  double sine = (speedIndependent + result.residualForce) / conversionWeight / gravity;
+  if (sine > 0.99) sine = 0.99;
+  if (sine < -0.99) sine = -0.99;
+  double calculatedGrade = tan(asin(sine)) * 100;
+  if (std::isnan(calculatedGrade)) calculatedGrade = 0;
+  if (calculatedGrade > 40) calculatedGrade = 40;
+  if (calculatedGrade < -40) calculatedGrade = -40;
+  result.grade = calculatedGrade;
+  log_d("Trainer simulation: grade %f%% Cw %f (wanted %f, residual %fN), Zwift %f%%", result.grade, result.windCoefficient, wanted, result.residualForce, grade);
+  return result;
+}
+
+/**
  * Calculates the power the rider would need in the virtual gear at the current cadence.
  *
  * @return Power in W (>= 0)

@@ -33,7 +33,11 @@ uint64_t DirConManager::zwiftGearRatio;
 uint16_t DirConManager::zwiftBicycleWeight;
 uint16_t DirConManager::zwiftUserWeight;
 
-int64_t DirConManager::smoothedZwiftGrade;
+double DirConManager::filteredGrade;
+double DirConManager::trainerWindCoefficient;
+double DirConManager::residualDragForce;
+uint32_t DirConManager::filteredGradeAt;
+bool DirConManager::filteredGradeValid;
 
 bool DirConManager::zwiftProtocolActive = false;
 uint32_t DirConManager::blockedPassthroughWrites = 0;
@@ -87,7 +91,11 @@ void DirConManager::resetValues() {
   zwiftBicycleWeight = 1000;
   zwiftUserWeight = 7500;
 
-  smoothedZwiftGrade = 0;
+  filteredGrade = 0;
+  filteredGradeAt = 0;
+  filteredGradeValid = false;
+  trainerWindCoefficient = 0;
+  residualDragForce = 0;
   zwiftProtocolActive = false;
   zwiftCw = Calculations::windResistanceCoefficient;
   zwiftCrr = Calculations::rollingResistanceCoefficient;
@@ -517,8 +525,6 @@ bool DirConManager::processZwiftSyncRequest(Service *service, Characteristic *ch
                 zwiftGrade ^= 0x01;
                 zwiftGrade *= -1;
               }
-              smoothedZwiftGrade += zwiftGrade;
-              smoothedZwiftGrade = smoothedZwiftGrade / 2;
             }
             // e.g. [04 22 09 10 8D 01 18 EC 27 20 90 03]: 0x18 = Cw x 10000 (5100 = 0.51 kg/m), 0x20 = Crr x 100000 (400 = 0.004)
             if (requestValues.find(0x18) != requestValues.end()) {
@@ -605,13 +611,34 @@ bool DirConManager::processZwiftSyncRequest(Service *service, Characteristic *ch
   return false;
 }
 
+double DirConManager::getFilteredGradePercent() {
+  // First-order lag with a time constant of a few seconds. On a real bike the rider + bike mass
+  // (~80 kg) carries you into a short ramp and the speed - and with it the force you feel - changes
+  // over 5-12 s. On a trainer the flywheel is equivalent to only ~20-25 kg, so a grade change that
+  // reaches it instantly feels far more abrupt than on the road.
+  double target = zwiftGrade / 100.0;
+  double timeConstant = SettingsManager::getGradeSmoothingSeconds();
+  uint32_t now = millis();
+  if (!filteredGradeValid || timeConstant <= 0) {
+    filteredGrade = target;
+  } else {
+    double elapsed = (now - filteredGradeAt) / 1000.0;
+    if (elapsed > 0) {
+      filteredGrade += (target - filteredGrade) * (1.0 - exp(-elapsed / timeConstant));
+    }
+  }
+  filteredGradeAt = now;
+  filteredGradeValid = true;
+  return filteredGrade;
+}
+
 void DirConManager::updateSIMModeResistance() {
-  double grade = (SettingsManager::isGradeSmoothingEnabled() ? smoothedZwiftGrade : zwiftGrade) / 100.0;
   // normal SIM mode w/o virtual shifting: just pass the grade on
   if (zwiftTrainerMode == TrainerMode::SIM_MODE) {
     TrainerControl::setSimulation(zwiftGrade / 100.0, zwiftCrr, zwiftCw);
     modelPower = 0;
   } else if (zwiftTrainerMode == TrainerMode::SIM_MODE_VIRTUAL_SHIFTING) {
+    double grade = getFilteredGradePercent();
     double totalWeight = (zwiftBicycleWeight + zwiftUserWeight) / 100.0;
     double gearRatio = gearMapper.getRatio();
     if (gearRatio <= 0) {
@@ -630,10 +657,14 @@ void DirConManager::updateSIMModeResistance() {
     } else if (virtualShiftingMode == VirtualShiftingMode::BASIC_RESISTANCE) {
       TrainerControl::setResistancePercent(Calculations::calculateGearedResistancePercentage(totalWeight, grade, cadence, gearRatio, defaultGearRatio, TrainerControl::getMaximumResistance(), difficulty, zwiftCrr, zwiftCw));
     } else {
-      // Track resistance: the whole force goes into the grade and the trainer is told Crr = Cw = 0,
-      // so its own rolling/air model (unknown, and applied at flywheel speed) can't distort the feel
-      TrainerControl::setSimulation(Calculations::calculateGearedGrade(totalWeight, grade, cadence, gearRatio, defaultGearRatio, difficulty, zwiftCrr, zwiftCw, 0, 0,
-                                                                       SettingsManager::getTrainerWeight()), 0, 0);
+      // Track resistance: gravity + rolling go into the grade (trainer Crr = 0), air drag is handed
+      // to the trainer as Cw x rho^3 so it reacts to speed instantly instead of through our 1 Hz loop
+      double maxWindCoefficient = (TrainerControl::getProtocol() == TrainerProtocolType::FEC) ? FEC_MAX_WIND_COEFFICIENT : FTMS_MAX_WIND_COEFFICIENT;
+      TrainerSimulation simulation = Calculations::calculateTrainerSimulation(totalWeight, grade, cadence, gearRatio, defaultGearRatio, difficulty, zwiftCrr, zwiftCw,
+                                                                              maxWindCoefficient, SettingsManager::getTrainerWeight());
+      trainerWindCoefficient = simulation.windCoefficient;
+      residualDragForce = simulation.residualForce;
+      TrainerControl::setSimulation(simulation.grade, 0, simulation.windCoefficient);
     }
   }
 }

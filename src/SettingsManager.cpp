@@ -1,6 +1,7 @@
 #include <SettingsManager.h>
 #include <Utils.h>
 #include <Config.h>
+#include <cmath>
 
 char SettingsManager::iotWebConfChainringTeethParameterValue[16];
 char SettingsManager::iotWebConfSprocketTeethParameterValue[16];
@@ -15,8 +16,8 @@ char SettingsManager::iotWebConfTrainerProtocolParameterValue[16];
 char SettingsManager::iotWebConfTrainerProtocolValues[][16] = { "auto", "ftms", "fec" };
 char SettingsManager::iotWebConfTrainerProtocolNames[][16] = { "Auto (FTMS)", "FTMS", "FE-C" };
 char SettingsManager::iotWebConfGearTableParameterValue[24];
-char SettingsManager::iotWebConfGearTableValues[][24] = { "zwift", "axs_50_10_32" };
-char SettingsManager::iotWebConfGearTableNames[][24] = { "Zwift (24 gears)", "SRAM AXS 50 x 10-32" };
+char SettingsManager::iotWebConfGearTableValues[][24] = { "zwift", "axs_50_36_10_32" };
+char SettingsManager::iotWebConfGearTableNames[][24] = { "Zwift (24 gears)", "SRAM AXS 50/36 x 10-32" };
 
 char SettingsManager::iotWebConfVirtualShiftingModeValues[][24] = { "basic_resistance", "target_power", "track_resistance" };
 char SettingsManager::iotWebConfVirtualShiftingModeNames[][24] = { "Basic Resistance", "Target Power", "Track Resistance" };
@@ -27,14 +28,15 @@ IotWebConfNumberParameter SettingsManager::iotWebConfSprocketTeethParameter("Spr
 IotWebConfSelectParameter SettingsManager::iotWebConfVirtualShiftingModeParameter = IotWebConfSelectParameter("Virtual Shifting Mode", "virtual_shifting_mode", SettingsManager::iotWebConfVirtualShiftingModeParameterValue, sizeof(iotWebConfVirtualShiftingModeParameterValue), (char*)iotWebConfVirtualShiftingModeValues, (char*)iotWebConfVirtualShiftingModeNames, sizeof(iotWebConfVirtualShiftingModeValues) / sizeof(iotWebConfVirtualShiftingModeParameterValue), sizeof(iotWebConfVirtualShiftingModeParameterValue), "track_resistance");
 IotWebConfCheckboxParameter SettingsManager::iotWebConfVirtualShiftingParameter = IotWebConfCheckboxParameter("Virtual shifting", "virtual_shifting", SettingsManager::iotWebConfVirtualShiftingParameterValue, sizeof(iotWebConfVirtualShiftingParameterValue), true);
 IotWebConfTextParameter SettingsManager::iotWebConfTrainerDeviceParameter = IotWebConfTextParameter("Trainer device", "trainer_device", iotWebConfTrainerDeviceParameterValue, sizeof(iotWebConfTrainerDeviceParameterValue), "");
-IotWebConfCheckboxParameter SettingsManager::iotWebConfGradeSmoothingParameter = IotWebConfCheckboxParameter("Grade smoothing", "grade_smoothing", SettingsManager::iotWebConfGradeSmoothingParameterValue, sizeof(iotWebConfGradeSmoothingParameterValue), true);
+// same 16 byte slot as the old on/off checkbox, so stored settings keep their layout
+IotWebConfNumberParameter SettingsManager::iotWebConfGradeSmoothingParameter("Grade smoothing (s)", "grade_smoothing", SettingsManager::iotWebConfGradeSmoothingParameterValue, sizeof(iotWebConfGradeSmoothingParameterValue), "4", "0..10", "min='0' max='10' step='0.5'");
 IotWebConfNumberParameter SettingsManager::iotWebConfTrainerWeightParameter("Trainer weight", "trainer_weight", SettingsManager::iotWebConfTrainerWeightParameterValue, sizeof(iotWebConfTrainerWeightParameterValue), "0", "0..250", "min='0' max='250' step='1'");
 IotWebConfNumberParameter SettingsManager::iotWebConfDifficultyParameter("Difficulty", "difficulty", SettingsManager::iotWebConfDifficultyParameterValue, sizeof(iotWebConfDifficultyParameterValue), "100", "1..200", "min='1' max='200' step='1'");
 IotWebConfCheckboxParameter SettingsManager::iotWebConfFTMSParameter = IotWebConfCheckboxParameter("FTMS Emulation", "ftms_emulation", SettingsManager::iotWebConfFTMSParameterValue, sizeof(iotWebConfFTMSParameterValue), false);
 
 IotWebConfSelectParameter SettingsManager::iotWebConfTrainerProtocolParameter = IotWebConfSelectParameter("Trainer protocol", "trainer_protocol", SettingsManager::iotWebConfTrainerProtocolParameterValue, sizeof(iotWebConfTrainerProtocolParameterValue), (char*)iotWebConfTrainerProtocolValues, (char*)iotWebConfTrainerProtocolNames, sizeof(iotWebConfTrainerProtocolValues) / sizeof(iotWebConfTrainerProtocolParameterValue), sizeof(iotWebConfTrainerProtocolParameterValue), "auto");
 
-IotWebConfSelectParameter SettingsManager::iotWebConfGearTableParameter = IotWebConfSelectParameter("Gear table", "gear_table", SettingsManager::iotWebConfGearTableParameterValue, sizeof(iotWebConfGearTableParameterValue), (char*)iotWebConfGearTableValues, (char*)iotWebConfGearTableNames, sizeof(iotWebConfGearTableValues) / sizeof(iotWebConfGearTableParameterValue), sizeof(iotWebConfGearTableParameterValue), "axs_50_10_32");
+IotWebConfSelectParameter SettingsManager::iotWebConfGearTableParameter = IotWebConfSelectParameter("Gear table", "gear_table", SettingsManager::iotWebConfGearTableParameterValue, sizeof(iotWebConfGearTableParameterValue), (char*)iotWebConfGearTableValues, (char*)iotWebConfGearTableNames, sizeof(iotWebConfGearTableValues) / sizeof(iotWebConfGearTableParameterValue), sizeof(iotWebConfGearTableParameterValue), "axs_50_36_10_32");
 
 IotWebConf* SettingsManager::iotWebConf;
 
@@ -144,16 +146,25 @@ std::string SettingsManager::getAPPassword() {
   return aPPassword;
 }
 
-bool SettingsManager::isGradeSmoothingEnabled() {
-  return (strncmp(iotWebConfGradeSmoothingParameterValue, "selected", sizeof(iotWebConfGradeSmoothingParameterValue)) == 0);
+double SettingsManager::getGradeSmoothingSeconds() {
+  // v1.5 and older stored a checkbox here ("selected" or ""); both become the new default.
+  // Turning smoothing off now stores "0.0".
+  if ((iotWebConfGradeSmoothingParameterValue[0] == 0) ||
+      (strncmp(iotWebConfGradeSmoothingParameterValue, "selected", sizeof(iotWebConfGradeSmoothingParameterValue)) == 0)) {
+    return DEFAULT_GRADE_SMOOTHING_SECONDS;
+  }
+  double seconds = atof(iotWebConfGradeSmoothingParameterValue);
+  if (std::isnan(seconds) || seconds < 0) seconds = 0;
+  if (seconds > MAX_GRADE_SMOOTHING_SECONDS) seconds = MAX_GRADE_SMOOTHING_SECONDS;
+  return seconds;
 }
 
-void SettingsManager::setGradeSmoothingEnabled(bool enabled) {
-  String gradeSmoothingEnabled = "";
-  if (enabled) {
-    gradeSmoothingEnabled = "selected";
-  }
-  strncpy(iotWebConfGradeSmoothingParameterValue, gradeSmoothingEnabled.c_str(), sizeof(iotWebConfGradeSmoothingParameterValue));
+void SettingsManager::setGradeSmoothingSeconds(double seconds) {
+  if (std::isnan(seconds) || seconds < 0) seconds = 0;
+  if (seconds > MAX_GRADE_SMOOTHING_SECONDS) seconds = MAX_GRADE_SMOOTHING_SECONDS;
+  char buffer[16];
+  snprintf(buffer, sizeof(buffer), "%.1f", seconds);
+  strncpy(iotWebConfGradeSmoothingParameterValue, buffer, sizeof(iotWebConfGradeSmoothingParameterValue));
 }
 
 uint16_t SettingsManager::getDifficulty() {
@@ -224,7 +235,8 @@ VirtualGears::GearTable SettingsManager::getGearTable() {
   if (strncmp(iotWebConfGearTableParameterValue, iotWebConfGearTableValues[0], sizeof(iotWebConfGearTableParameterValue)) == 0) {
     return VirtualGears::GearTable::ZWIFT;
   }
-  return VirtualGears::GearTable::AXS_50_10_32;
+  // anything else, including the v1.5 value "axs_50_10_32", is the AXS table
+  return VirtualGears::GearTable::AXS_50_36_10_32;
 }
 
 void SettingsManager::setGearTable(VirtualGears::GearTable gearTable) {

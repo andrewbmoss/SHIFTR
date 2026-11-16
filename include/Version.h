@@ -7,7 +7,7 @@
 
 #ifndef VERSION_H
 #define VERSION_H
-#define VERSION "v1.5.0-ftms"
+#define VERSION "v1.6.0-ftms"
 #define VERSION_MAJOR 1
 #define VERSION_MINOR 5
 #define VERSION_PATCH 0

@@ -229,8 +229,8 @@ void test_pedal_torque_matches_real_bike(void) {
   for (double r0 : physical) {
     for (double grade : grades) {
       for (double cadence : cadences) {
-        for (int g = 0; g < 12; g++) {
-          double r = 50.0 / VirtualGears::AXS_COGS[g];
+        for (size_t g = 0; g < VirtualGears::AXS_GEAR_COUNT; g++) {
+          double r = (double)VirtualGears::AXS_GEARS[g].chainring / VirtualGears::AXS_GEARS[g].cog;
           double v = Calculations::calculateSpeed(cadence, Calculations::wheelDiameter, r);
           double real = Calculations::calculateRoadForce(totalWeight, grade, v, 100) * r;
           double sent = Calculations::calculateGearedGrade(totalWeight, grade, cadence, r, r0, 100);
@@ -275,28 +275,98 @@ void test_wind_coefficient_units(void) {
   TEST_ASSERT_DOUBLE_WITHIN(1e-9, -0.5 * 0.51 * 4.0, Calculations::calculateWindResistance(-2.0, 0, 0.51));
 }
 
-void test_axs_mapper_tracks_steps(void) {
+void test_axs_table_is_full_2x12_sorted(void) {
+  // all 24 combinations of 50/36 x 10-32, each once, easiest to hardest
+  const int cogs[12] = {10, 11, 12, 13, 14, 15, 17, 19, 21, 24, 28, 32};
+  for (int ring : {36, 50}) {
+    for (int cog : cogs) {
+      int found = 0;
+      for (size_t g = 0; g < VirtualGears::AXS_GEAR_COUNT; g++) {
+        if (VirtualGears::AXS_GEARS[g].chainring == ring && VirtualGears::AXS_GEARS[g].cog == cog) found++;
+      }
+      TEST_ASSERT_EQUAL_INT(1, found);
+    }
+  }
+  for (size_t g = 1; g < VirtualGears::AXS_GEAR_COUNT; g++) {
+    double previous = (double)VirtualGears::AXS_GEARS[g - 1].chainring / VirtualGears::AXS_GEARS[g - 1].cog;
+    double current = (double)VirtualGears::AXS_GEARS[g].chainring / VirtualGears::AXS_GEARS[g].cog;
+    TEST_ASSERT_TRUE(current > previous);
+  }
+}
+
+void test_axs_mapper_follows_zwift_gear(void) {
   VirtualGears::GearMapper mapper;
-  mapper.setTable(VirtualGears::GearTable::AXS_50_10_32);
-  // Zwift gear 12 (2.40) starts on AXS gear 6 = 50x17
-  TEST_ASSERT_DOUBLE_WITHIN(1e-9, 50.0 / 17, mapper.map(2.40));
-  TEST_ASSERT_EQUAL_INT(6, mapper.getGear());
-  TEST_ASSERT_EQUAL_STRING("50x17 (6/12)", mapper.getLabel().c_str());
-  // one Zwift step up = one cog
-  TEST_ASSERT_DOUBLE_WITHIN(1e-9, 50.0 / 15, mapper.map(2.61));
-  // same ratio again (e.g. weight update) = no change
-  TEST_ASSERT_DOUBLE_WITHIN(1e-9, 50.0 / 15, mapper.map(2.61));
-  // over-shift past the top: stays on 10T
-  double ratio = 0;
-  for (int i = 13; i < 24; i++) ratio = mapper.map(VirtualGears::ZWIFT_RATIOS[i]);
-  TEST_ASSERT_DOUBLE_WITHIN(1e-9, 5.0, ratio);
+  mapper.setTable(VirtualGears::GearTable::AXS_50_36_10_32);
+  TEST_ASSERT_DOUBLE_WITHIN(1e-9, 36.0 / 32, mapper.map(VirtualGears::ZWIFT_RATIOS[0]));
+  TEST_ASSERT_EQUAL_STRING("36x32 (1/24)", mapper.getLabel().c_str());
+  TEST_ASSERT_DOUBLE_WITHIN(1e-9, 50.0 / 10, mapper.map(VirtualGears::ZWIFT_RATIOS[23]));
+  TEST_ASSERT_EQUAL_STRING("50x10 (24/24)", mapper.getLabel().c_str());
+  // Zwift's default gear 12 (2.40) is 36x14
+  TEST_ASSERT_DOUBLE_WITHIN(1e-9, 36.0 / 14, mapper.map(2.40));
   TEST_ASSERT_EQUAL_INT(12, mapper.getGear());
-  // first shift down acts immediately
-  TEST_ASSERT_DOUBLE_WITHIN(1e-9, 50.0 / 11, mapper.map(VirtualGears::ZWIFT_RATIOS[22]));
-  // bottom end
-  for (int i = 21; i >= 0; i--) ratio = mapper.map(VirtualGears::ZWIFT_RATIOS[i]);
-  TEST_ASSERT_DOUBLE_WITHIN(1e-9, 50.0 / 32, ratio);
-  TEST_ASSERT_DOUBLE_WITHIN(1e-9, 50.0 / 28, mapper.map(VirtualGears::ZWIFT_RATIOS[1]));
+  // absolute: the same Zwift ratio always gives the same gear, whatever came before
+  mapper.map(VirtualGears::ZWIFT_RATIOS[3]);
+  TEST_ASSERT_DOUBLE_WITHIN(1e-9, 36.0 / 14, mapper.map(2.40));
+  for (size_t i = 0; i < VirtualGears::ZWIFT_GEAR_COUNT; i++) {
+    mapper.map(VirtualGears::ZWIFT_RATIOS[i]);
+    TEST_ASSERT_EQUAL_INT((int)i + 1, mapper.getGear());
+  }
+}
+
+// force the trainer applies for a grade + Cw at its own speed (trainer Crr = 0)
+static double trainerForceWithDrag(double gradePercent, double cw, double trainerSpeed, double weight = totalWeight) {
+  return weight * 9.81 * sin(atan(gradePercent / 100.0)) + 0.5 * cw * trainerSpeed * trainerSpeed;
+}
+
+void test_trainer_simulation_matches_real_bike(void) {
+  // pedal torque = trainer force x physical ratio must equal road force x virtual ratio,
+  // whether or not the Cw fits under the protocol limit
+  const double grades[] = {-6, -2, 0, 3, 7, 12};
+  const double cadences[] = {60, 85, 105};
+  const double physical[] = {34.0 / 14.0, 50.0 / 14.0};
+  const double limits[] = {2.55, 1.86};
+  for (double r0 : physical) {
+    for (double limit : limits) {
+      for (double grade : grades) {
+        for (double cadence : cadences) {
+          for (size_t g = 0; g < VirtualGears::AXS_GEAR_COUNT; g++) {
+            double r = (double)VirtualGears::AXS_GEARS[g].chainring / VirtualGears::AXS_GEARS[g].cog;
+            double v = Calculations::calculateSpeed(cadence, Calculations::wheelDiameter, r);
+            double vReal = Calculations::calculateSpeed(cadence, Calculations::wheelDiameter, r0);
+            double real = Calculations::calculateRoadForce(totalWeight, grade, v, 100, 0.004, 0.51) * r;
+            TrainerSimulation sim = Calculations::calculateTrainerSimulation(totalWeight, grade, cadence, r, r0, 100, 0.004, 0.51, limit);
+            TEST_ASSERT_TRUE(sim.windCoefficient <= limit + 1e-9);
+            TEST_ASSERT_TRUE(sim.windCoefficient >= 0);
+            if (fabs(sim.grade) >= 39.9) continue;  // clamped
+            TEST_ASSERT_DOUBLE_WITHIN(fabs(real) * 0.002 + 0.01, real, trainerForceWithDrag(sim.grade, sim.windCoefficient, vReal) * r0);
+          }
+        }
+      }
+    }
+  }
+}
+
+void test_trainer_simulation_grade_ignores_cadence_under_limit(void) {
+  // physical 50x14, virtual 50x10: Cw x rho^3 = 0.51 x 1.4^3 = 1.40 fits, so the grade must not
+  // depend on cadence - that's what removes the 1 Hz feedback loop that oscillated in v1.5
+  double r0 = 50.0 / 14, r = 5.0;
+  TrainerSimulation slow = Calculations::calculateTrainerSimulation(totalWeight, 2, 70, r, r0, 100, 0.004, 0.51, 2.55);
+  TrainerSimulation fast = Calculations::calculateTrainerSimulation(totalWeight, 2, 100, r, r0, 100, 0.004, 0.51, 2.55);
+  TEST_ASSERT_DOUBLE_WITHIN(0.005, slow.grade, fast.grade);  // only the 0.01 kg/m rounding of Cw remains
+  TEST_ASSERT_DOUBLE_WITHIN(0.006, 0.51 * 1.4 * 1.4 * 1.4, slow.windCoefficient);
+  TEST_ASSERT_TRUE(fabs(slow.residualForce) < 0.1);
+  // physical 34x14: 0.51 x 2.06^3 = 4.45 doesn't fit, the rest goes into the grade
+  TrainerSimulation capped = Calculations::calculateTrainerSimulation(totalWeight, 2, 90, r, 34.0 / 14, 100, 0.004, 0.51, 2.55);
+  TEST_ASSERT_DOUBLE_WITHIN(1e-9, 2.55, capped.windCoefficient);
+  TEST_ASSERT_TRUE(capped.residualForce > 10);
+}
+
+void test_trainer_simulation_weight_only_scales_grade(void) {
+  double r0 = 50.0 / 14, r = 50.0 / 17;
+  TrainerSimulation own = Calculations::calculateTrainerSimulation(totalWeight, 5, 85, r, r0, 100, 0.004, 0.51, 2.55);
+  TrainerSimulation light = Calculations::calculateTrainerSimulation(totalWeight, 5, 85, r, r0, 100, 0.004, 0.51, 2.55, 70);
+  TEST_ASSERT_DOUBLE_WITHIN(1e-9, own.windCoefficient, light.windCoefficient);
+  TEST_ASSERT_DOUBLE_WITHIN(0.01, totalWeight * sin(atan(own.grade / 100.0)), 70 * sin(atan(light.grade / 100.0)));
 }
 
 void test_zwift_mapper_passthrough(void) {
@@ -376,7 +446,11 @@ int main(int argc, char** argv) {
   RUN_TEST(test_downhill_harder_gear_needs_less);
   RUN_TEST(test_trainer_weight_conversion);
   RUN_TEST(test_wind_coefficient_units);
-  RUN_TEST(test_axs_mapper_tracks_steps);
+  RUN_TEST(test_axs_table_is_full_2x12_sorted);
+  RUN_TEST(test_axs_mapper_follows_zwift_gear);
+  RUN_TEST(test_trainer_simulation_matches_real_bike);
+  RUN_TEST(test_trainer_simulation_grade_ignores_cadence_under_limit);
+  RUN_TEST(test_trainer_simulation_weight_only_scales_grade);
   RUN_TEST(test_zwift_mapper_passthrough);
   RUN_TEST(test_fec_wind_page);
   RUN_TEST(test_geared_grade_never_nan_or_out_of_range);

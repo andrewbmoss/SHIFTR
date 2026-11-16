@@ -74,7 +74,8 @@
                 setText('live_speed', live.speed_kph.toFixed(1) + ' km/h');
                 setText('live_zwift', live.zwift_clients > 0 ? (live.zwift_mode + ', ' + live.zwift_clients + ' connection(s)') : 'Not connected');
                 setText('live_gear', live.virtual_gear != '-' ? (live.virtual_gear + ' <small>(ratio ' + live.gear_ratio.toFixed(2) + ')</small>') : '-');
-                setText('live_grade', live.zwift_grade.toFixed(1) + ' %');
+                setText('live_grade', live.zwift_grade.toFixed(1) + ' %' + (live.zwift_mode.indexOf('virtual') >= 0 ? ' <small>(smoothed ' + live.smoothed_grade.toFixed(1) + ' %)</small>' : ''));
+                setText('live_drag', live.trainer_cw > 0 ? ('Cw ' + live.trainer_cw.toFixed(2) + ' kg/m to trainer' + (live.residual_drag > 0.5 ? ' <small>(+' + live.residual_drag.toFixed(0) + ' N over the limit, added to the grade)</small>' : '')) : '-');
                 setText('live_command', live.trainer_command);
                 setText('live_blocked', live.blocked_writes);
                 setText('live_packets', live.packets);
@@ -121,6 +122,7 @@
                 <div class="form-control"><label>Zwift:</label><span id="live_zwift"></span></div>
                 <div class="form-control"><label>Virtual gear:</label><span id="live_gear"></span></div>
                 <div class="form-control"><label>Zwift grade:</label><span id="live_grade"></span></div>
+                <div class="form-control"><label>Air drag:</label><span id="live_drag"></span></div>
                 <div class="form-control"><label>Sent to trainer:</label><span id="live_command"></span></div>
                 <div class="form-control"><label>Data received:</label><span id="live_packets"></span></div>
                 <div class="form-control"><label>Blocked writes:</label><span id="live_blocked"></span></div>

@@ -362,11 +362,7 @@ void handleWebServerSettings() {
   json += ",";
 
   json += "\"grade_smoothing\": ";
-  if (SettingsManager::isGradeSmoothingEnabled()) {
-    json += "true";
-  } else {
-    json += "false";
-  }
+  json += String(SettingsManager::getGradeSmoothingSeconds(), 1);
   json += ",";
 
   json += "\"difficulty\": ";
@@ -448,9 +444,7 @@ void handleWebServerSettingsPost() {
       SettingsManager::setSprocketTeeth(std::atoi(webServer.arg("sprocket_teeth").c_str()));
     }
     if (webServer.hasArg("grade_smoothing")) {
-      SettingsManager::setGradeSmoothingEnabled(true);
-    } else {
-      SettingsManager::setGradeSmoothingEnabled(false);
+      SettingsManager::setGradeSmoothingSeconds(std::atof(webServer.arg("grade_smoothing").c_str()));
     }
     if (webServer.hasArg("trainer_weight")) {
       SettingsManager::setTrainerWeight(std::atoi(webServer.arg("trainer_weight").c_str()));
@@ -636,7 +630,7 @@ void handleWebServerLive() {
            "{\"trainer_connected\": %s, \"trainer_name\": \"%s\", \"protocol\": \"%s\", \"control\": %s, "
            "\"power\": %u, \"cadence\": %u, \"cadence_source\": \"%s\", \"speed_kph\": %.1f, \"data_age_ms\": %ld, "
            "\"zwift_clients\": %u, \"zwift_mode\": \"%s\", \"virtual_gear\": \"%s\", \"gear_ratio\": %.2f, \"model_power\": %.0f, "
-           "\"zwift_grade\": %.2f, \"trainer_command\": \"%s\", \"blocked_writes\": %lu, \"packets\": \"%s\"}",
+           "\"zwift_grade\": %.2f, \"smoothed_grade\": %.2f, \"trainer_cw\": %.2f, \"residual_drag\": %.1f, \"trainer_command\": \"%s\", \"blocked_writes\": %lu, \"packets\": \"%s\"}",
            BTDeviceManager::isConnected() ? "true" : "false",
            BTDeviceManager::getConnecedDeviceName().c_str(),
            TrainerControl::getProtocolName(),
@@ -652,6 +646,9 @@ void handleWebServerLive() {
            DirConManager::getSimulatedGearRatio(),
            DirConManager::getModelPower(),
            DirConManager::getZwiftGradePercent(),
+           DirConManager::getSmoothedGradePercent(),
+           DirConManager::getTrainerWindCoefficient(),
+           DirConManager::getResidualDragForce(),
            TrainerControl::getLastCommandDescription().c_str(),
            (unsigned long)DirConManager::getBlockedPassthroughWrites(),
            TrainerControl::getPacketSummary().c_str());

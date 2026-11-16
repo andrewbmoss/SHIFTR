@@ -431,7 +431,7 @@ String TrainerControl::describe(const Command& command) {
   char buffer[48];
   switch (command.type) {
     case CommandType::SIMULATION:
-      snprintf(buffer, sizeof(buffer), "Grade %.2f %%", command.value1);
+      snprintf(buffer, sizeof(buffer), "Grade %.2f %%, Crr %.4f, Cw %.2f", command.value1, command.value2, command.value3);
       break;
     case CommandType::TARGET_POWER:
       snprintf(buffer, sizeof(buffer), "Target power %.0f W", command.value1);

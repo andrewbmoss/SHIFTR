@@ -30,7 +30,7 @@ Wiring and the first flash are in [WIRING.md](WIRING.md).
   fight. The *Blocked writes* counter on the status page shows if that ever happens.
 - **Web status page** now has a live *Ride* panel (power, cadence and its source,
   virtual gear, Zwift grade, what was sent to the trainer).
-- **Lifelike virtual shifting** (v1.5): see "Virtual shifting feel" below.
+- **Lifelike virtual shifting** (v1.5, v1.6): see "Virtual shifting feel" below.
 - **Function button** on IO4: short press re-pairs the trainer, hold 5 s reboots.
 - **ArduinoOTA** in addition to the web firmware upload (`pio run -e wt32-eth01_ota -t upload`).
 - Bigger app partitions (`min_spiffs.csv`). The firmware is about 1.3 MB and no longer
@@ -40,63 +40,86 @@ Wiring and the first flash are in [WIRING.md](WIRING.md).
   units, and grade calculation could produce NaN at extreme gears.
 - Uses the maintained `esp32async/AsyncTCP` fork, and all library versions are pinned.
 
-## Virtual shifting feel (v1.5)
+## Virtual shifting feel (v1.5, v1.6)
 
 The goal is that every gear and every grade feels like a real bike: pedal torque at a
 given cadence equals *road force × gear ratio*, where road force is gravity, rolling
 resistance and air drag at the speed the virtual bike would go.
 
-Changes from upstream SHIFTR's physics:
+### v1.6
 
-- **Air drag now scales with the gear.** Upstream multiplied only gravity and rolling
-  resistance by the gear ratio, so in the upper gears a shift on the flat did about 15 %
-  instead of 19 %. Together with the offset below, flat roads were only 45–75 % as hard as
-  a real bike, and each +1 % of grade did 2–3 times as much as a shift (a real bike: 1–2.5).
-- **No more −1 % grade offset.** It made every road about 8 N (60–90 W) too easy, so a
-  hill was a much bigger jump from that lowered baseline than it should be.
-- **Downhill gearing fixed.** Descents always got easier, but on a descent the hill's pull
-  was divided by the gear ratio instead of multiplied. So a harder gear passed *less* of the
-  pull to the pedals instead of more: too little help in hard gears, too much in easy ones.
-  The general "descents go light too soon" feel came from the offset and drag issues above.
-- **The trainer gets the whole force as a grade, with Crr = Cw = 0.** FTMS trainers add
-  their own rolling resistance and air drag at *flywheel* speed. That speed has nothing
-  to do with the virtual bike's speed, and how they interpret Cw differs between makes
-  (around 100 W at a typical flywheel speed). Setting both to 0 removes the trainer's own model from
-  the equation.
-- **Zwift's own Cw and Crr are used.** Zwift sends them with every grade update; upstream
-  ignored them.
-- **Gear table.** *Settings > Gear table* now has *SRAM AXS 50 × 10-32* (the default)
-  next to Zwift's 24 gears. Each Click press moves one cog (10 11 12 13 14 15 17 19 21
-  24 28 32), and presses past either end of the cassette do nothing, like a real
-  derailleur. Zwift's own gear number keeps counting, so trust the *Virtual gear* line on
-  the status page (e.g. `50x17 (6/12)`) instead. Zwift's 24 gears are 6–7 % apart in
-  the upper half; the AXS steps are 7–17 %.
+- **Gear table: SRAM AXS 2×12, 50/36 × 10-32.** All 24 chainring/cog combinations,
+  sorted from 36×32 (1.13) to 50×10 (5.00), one per Zwift gear: Zwift gear 1 is 36×32,
+  gear 12 (Zwift's default) is 36×14, gear 24 is 50×10. The status page shows e.g.
+  `36x15 (11/24)`. Because it's every combination in ratio order, a few neighbours are
+  close together (36×24 → 50×32 is +4 %, 36×15 → 36×14 is +0.8 %), the same as on the
+  real bike if you used every gear sequentially.
+- **Air drag is computed by the trainer again.** v1.5 put all of it into the grade,
+  computed from cadence once a second. That forms a feedback loop (faster → more drag →
+  slower → less drag) with about 2 s of delay, and in the biggest gears it oscillated
+  with a period of 6–8 s. v1.6 sends the trainer *Cw × ρ³* (ρ = virtual ratio / physical
+  ratio). The trainer applies 0.5 × Cw × v² from its own flywheel speed many times a
+  second, which is exactly *drag at virtual speed × ρ*, so the physics is unchanged but
+  the loop is gone. Gravity and rolling resistance still go in the grade, so the grade no
+  longer depends on cadence. FTMS can carry Cw up to 2.55 kg/m, FE-C up to 1.86 kg/m;
+  anything above that is added to the grade as before (the *Air drag* line on the
+  status page shows it).
+- **Grade smoothing is a time constant.** On the road, rider + bike (~85 kg) carry you
+  into a ramp and your speed, and with it the force you feel, settles over 5–12 s. A
+  direct-drive flywheel is equivalent to only ~20–25 kg, so a grade that reaches it
+  instantly feels sharper than the real thing. *Grade smoothing* (default 4 s, 0 = off)
+  lets the grade follow Zwift with that lag. The status page shows Zwift's grade and the
+  smoothed one.
+
+### Physical gear (important in v1.6)
+
+Put the chain on the **big ring** and set *Chainring* to match (*Sprocket* stays 14 for
+the Zwift Cog). The trainer's Cw limit only covers every virtual gear if the physical
+ratio is at least about 2.9 (FTMS, chainring ≥ 42) or 3.25 (FE-C, chainring ≥ 46):
+
+| Chainring on the 14T Cog | ρ at 50×10 | Cw needed at 50×10 | FTMS (max 2.55) | FE-C (max 1.86) |
+|---|---|---|---|---|
+| 34 | 2.06 | 4.45 | 43 % of the drag via grade | no |
+| 36 | 1.94 | 3.75 | 32 % via grade | no |
+| 39 | 1.79 | 2.95 | 14 % via grade | no |
+| 42 | 1.67 | 2.36 | fits | no |
+| 46 | 1.52 | 1.80 | fits | fits |
+| 50 | 1.40 | 1.40 | fits | fits |
+| 52 | 1.35 | 1.24 | fits | fits |
+
+The part that doesn't fit is handled like v1.5 did: it still works, it's just the part
+of the force that lags behind cadence changes. A bigger ring also spins the flywheel
+faster, which gives it more inertia and a more road-like feel. If the easiest gears on
+descents all feel the same, the trainer is at its minimum resistance at that flywheel
+speed: try the small ring.
 
 ### Calibrating to the trainer
 
 The FTMS standard has no field for rider weight, so the trainer turns the grade into
-force using a weight of its own. The *Ride* panel shows the measured power next to
-*simulated bike needs … W*. Pedal steadily in one gear on a flat road for 20–30 s:
+force using a weight of its own. Since v1.6 that weight only affects gravity and rolling
+resistance (air drag is now separate), so calibrate **on a steady climb of 4 % or
+more**, not on the flat. The *Ride* panel shows the measured power next to *simulated
+bike needs … W*. Hold one gear and cadence for 20–30 s:
 
 - If both numbers roughly agree, there's nothing to do.
-- If the measured power is consistently a fixed share of the model, for example 85 %,
-  set *Trainer weight* to that share of your Zwift rider + bike weight (85 % of 84 kg
-  ≈ 71 kg). That scales everything evenly without changing how gears compare with hills.
+- If the measured power is consistently a fixed share of the model, for example 115 %,
+  set *Trainer weight* to your Zwift rider + bike weight divided by that share
+  (84 kg / 1.15 ≈ 73 kg).
 
-*Difficulty* now scales only the grade (like Zwift's trainer difficulty). Leave it at
-100 % for real-world hills.
+*Difficulty* scales only the grade (like Zwift's trainer difficulty). Leave it at 100 %
+for real-world hills, or lower it if you want climbs gentler than the road.
 
-### Physical gear
+### v1.5
 
-Set *Chainring* and *Sprocket* to the chainring your chain is actually on and 14 (the
-Cog). A smaller physical ratio (for example 34 × 14) keeps the flywheel slower. That
-gives the trainer more room at the easy end, but the hardest sprints may ask for steep
-trainer grades (around 30 %). A bigger ratio (50 × 14) does the opposite. If the easiest
-gears all feel the same, the trainer is at its minimum resistance: try a smaller
-chainring.
-
-**Note:** updating to v1.5 resets the device settings once, because new settings were
-added. Afterwards, pick the trainer and set the chainring again.
+- **Air drag scales with the gear.** Upstream multiplied only gravity and rolling
+  resistance by the gear ratio, so in the upper gears a shift on the flat did about 15 %
+  instead of 19 %.
+- **No more −1 % grade offset.** It made every road about 8 N (60–90 W) too easy, so a
+  hill was a much bigger jump from that lowered baseline than it should be.
+- **Downhill gearing fixed.** On a descent the hill's pull was divided by the gear ratio
+  instead of multiplied, so a harder gear passed less of the pull to the pedals.
+- **Zwift's own Cw and Crr are used.** Zwift sends them with every grade update; upstream
+  ignored them.
 
 ## Build and first flash (Windows)
 
@@ -121,7 +144,7 @@ Prebuilt binaries are in `firmware/` if you'd rather not build. Flash
    - **Trainer device**: your Saris. Close QZ or any other app first: the trainer accepts only one Bluetooth connection, and anything still connected hides it from the bridge.
    - **Trainer protocol**: *Auto (FTMS)*.
    - **Virtual shifting**: on. **VS mode**: *Track Resistance* (recommended for FTMS).
-   - **Chainring**: the teeth of the chainring your chain sits on. **Sprocket**: 14 for the Zwift Cog. These set the physical ratio the virtual gears are computed against.
+   - **Chainring**: the teeth of the chainring your chain sits on (use the big ring). **Sprocket**: 14 for the Zwift Cog. These set the physical ratio the virtual gears are computed against.
 5. On the status page the *Ride* panel should show the trainer *via FTMS* and power/speed when you pedal.
 
 ## Pairing in Zwift (Windows)
@@ -143,7 +166,7 @@ Prebuilt binaries are in `firmware/` if you'd rather not build. Flash
 | ERG | Start a workout | *Sent to trainer* shows `Target power ... W` |
 | Cadence | *Ride* panel | Source says `trainer` or `estimated from speed`. If it is estimated and reads wrong, correct the chainring setting. |
 
-If shifting feels too strong or too weak, *Difficulty* scales it (100 % = 1:1). If
+If climbs feel too strong, lower *Difficulty* or calibrate *Trainer weight* (see above). If
 *Track Resistance* feels laggy on your trainer, try *Target Power*, which uses ERG on
 the trainer. If FTMS misbehaves, try the *FE-C* protocol. The Saris advertised both.
 

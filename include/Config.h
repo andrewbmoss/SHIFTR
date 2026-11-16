@@ -25,6 +25,10 @@
 #define TRAINER_CONTROL_INDICATION_TIMEOUT 1000 // ms to wait for the FTMS control response
 #define TRAINER_DATA_TIMEOUT 3000               // ms without trainer data before NOMINAL_CADENCE is used
 #define NOMINAL_CADENCE 85                      // rpm assumed for virtual shifting when the trainer sends no data
+#define FTMS_MAX_WIND_COEFFICIENT 2.55          // kg/m, FTMS Indoor Bike Simulation Cw is a UINT8 in 0.01 kg/m
+#define FEC_MAX_WIND_COEFFICIENT 1.86           // kg/m, ANT+ FE-C page 50 limit
+#define DEFAULT_GRADE_SMOOTHING_SECONDS 4.0     // grade smoothing time constant when the old on/off setting was "on"
+#define MAX_GRADE_SMOOTHING_SECONDS 10.0
 
 // Function button (re-pair / reboot), active low with internal pull-up
 #define FUNCTION_BUTTON_PIN 4

@@ -35,12 +35,13 @@ class SettingsManager {
   static uint16_t getTrainerWeight();
   static void setTrainerWeight(uint16_t weight);
   static bool isVirtualShiftingEnabled();
-  static bool isGradeSmoothingEnabled();
+  // grade smoothing time constant in seconds, 0 = off
+  static double getGradeSmoothingSeconds();
   static VirtualShiftingMode getVirtualShiftingMode();
   static void setVirtualShiftingMode(VirtualShiftingMode virtualShiftingMode);
   static std::map<size_t, std::string> getVirtualShiftingModes();
   static void setVirtualShiftingEnabled(bool enabled);
-  static void setGradeSmoothingEnabled(bool enabled);
+  static void setGradeSmoothingSeconds(double seconds);
   static std::string getTrainerDeviceName();
   static void setTrainerDeviceName(std::string trainerDevice);
   static IotWebConfParameterGroup* getIoTWebConfSettingsParameterGroup();
@@ -79,7 +80,7 @@ class SettingsManager {
   static IotWebConfSelectParameter iotWebConfVirtualShiftingModeParameter;
   static IotWebConfCheckboxParameter iotWebConfVirtualShiftingParameter;
   static IotWebConfTextParameter iotWebConfTrainerDeviceParameter;
-  static IotWebConfCheckboxParameter iotWebConfGradeSmoothingParameter;
+  static IotWebConfNumberParameter iotWebConfGradeSmoothingParameter;
   static IotWebConfNumberParameter iotWebConfDifficultyParameter;
   static IotWebConfNumberParameter iotWebConfTrainerWeightParameter;
   static IotWebConfCheckboxParameter iotWebConfFTMSParameter;

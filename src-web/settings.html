@@ -39,7 +39,7 @@
                 virtualShifting.checked = response.virtual_shifting;
                 chainringTeeth.value = response.chainring_teeth;
                 sprocketTeeth.value = response.sprocket_teeth;
-                gradeSmoothing.checked = response.grade_smoothing;
+                gradeSmoothing.value = response.grade_smoothing;
                 difficulty.value = response.difficulty;
                 trainerWeight.value = response.trainer_weight;
                 ftmsEmulation.checked = response.ftms_emulation;
@@ -170,11 +170,8 @@
                         <input type="number" id="sprocket_teeth" name="sprocket_teeth" min="1" max="100" class="short" onchange="enableSave()"><span>&nbsp; teeth</span>
                     </div>
                     <div class="form-control">
-                        <label>Grade smoothing:</label>
-                        <label class="switch">
-                            <input type="checkbox" id="grade_smoothing" name="grade_smoothing" onchange="enableSave()">
-                            <span class="slider round"></span>
-                        </label>
+                        <label for="grade_smoothing">Grade smoothing:</label>
+                        <input type="number" id="grade_smoothing" name="grade_smoothing" min="0" max="10" step="0.5" class="short" onchange="enableSave()"><span>&nbsp; s (0 = off)</span>
                     </div>
                     <div class="form-control">
                         <label for="difficulty">Difficulty:</label>

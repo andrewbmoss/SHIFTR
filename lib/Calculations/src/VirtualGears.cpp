@@ -8,7 +8,12 @@ namespace VirtualGears {
 const double ZWIFT_RATIOS[ZWIFT_GEAR_COUNT] = {0.75, 0.87, 0.99, 1.11, 1.23, 1.38, 1.53, 1.68, 1.86, 2.04, 2.22, 2.40,
                                                2.61, 2.82, 3.03, 3.24, 3.49, 3.74, 3.99, 4.24, 4.54, 4.84, 5.14, 5.49};
 
-const int AXS_COGS[AXS_GEAR_COUNT] = {32, 28, 24, 21, 19, 17, 15, 14, 13, 12, 11, 10};
+// sorted by ratio: 1.125 1.286 1.500 1.563 1.714 1.786 1.895 2.083 2.118 2.381 2.400 2.571
+//                  2.632 2.769 2.941 3.000 3.273 3.333 3.571 3.600 3.846 4.167 4.545 5.000
+const ChainringCog AXS_GEARS[AXS_GEAR_COUNT] = {
+    {36, 32}, {36, 28}, {36, 24}, {50, 32}, {36, 21}, {50, 28}, {36, 19}, {50, 24},
+    {36, 17}, {50, 21}, {36, 15}, {36, 14}, {50, 19}, {36, 13}, {50, 17}, {36, 12},
+    {36, 11}, {50, 15}, {50, 14}, {36, 10}, {50, 13}, {50, 12}, {50, 11}, {50, 10}};
 
 int zwiftGearIndex(double ratio) {
   int best = 1;
@@ -23,12 +28,6 @@ int zwiftGearIndex(double ratio) {
   return best;
 }
 
-static int clampGear(int value, int count) {
-  if (value < 1) return 1;
-  if (value > count) return count;
-  return value;
-}
-
 void GearMapper::setTable(GearTable newTable) {
   if (newTable != table) {
     table = newTable;
@@ -37,37 +36,21 @@ void GearMapper::setTable(GearTable newTable) {
 }
 
 void GearMapper::reset() {
-  tracking = false;
-  lastZwiftGear = 0;
   gear = 0;
   ratio = 0;
-}
-
-int GearMapper::getGearCount() const {
-  return (table == GearTable::AXS_50_10_32) ? (int)AXS_GEAR_COUNT : (int)ZWIFT_GEAR_COUNT;
 }
 
 double GearMapper::map(double zwiftRatio) {
   if (zwiftRatio <= 0) {
     return zwiftRatio;
   }
-  int zwiftGear = zwiftGearIndex(zwiftRatio);
-  if (table == GearTable::ZWIFT) {
-    gear = zwiftGear;
-    ratio = zwiftRatio;
-    return ratio;
-  }
-  // AXS: follow Zwift's up/down steps one cog at a time, stopping at the ends of the cassette.
-  // Tracking the steps (instead of a fixed Zwift->AXS table) means a shift in the opposite
-  // direction always acts immediately, even after over-shifting past an end.
-  if (!tracking) {
-    gear = clampGear(zwiftGear - AXS_ZWIFT_OFFSET, (int)AXS_GEAR_COUNT);
-    tracking = true;
+  // both tables have 24 gears: Zwift gear n is simulated as gear n of the active table
+  gear = zwiftGearIndex(zwiftRatio);
+  if (table == GearTable::AXS_50_36_10_32) {
+    ratio = (double)AXS_GEARS[gear - 1].chainring / AXS_GEARS[gear - 1].cog;
   } else {
-    gear = clampGear(gear + (zwiftGear - lastZwiftGear), (int)AXS_GEAR_COUNT);
+    ratio = zwiftRatio;
   }
-  lastZwiftGear = zwiftGear;
-  ratio = (double)AXS_CHAINRING / AXS_COGS[gear - 1];
   return ratio;
 }
 
@@ -76,10 +59,10 @@ std::string GearMapper::getLabel() const {
   if (gear == 0) {
     return "-";
   }
-  if (table == GearTable::AXS_50_10_32) {
-    snprintf(buffer, sizeof(buffer), "%dx%d (%d/%d)", AXS_CHAINRING, AXS_COGS[gear - 1], gear, (int)AXS_GEAR_COUNT);
+  if (table == GearTable::AXS_50_36_10_32) {
+    snprintf(buffer, sizeof(buffer), "%dx%d (%d/24)", AXS_GEARS[gear - 1].chainring, AXS_GEARS[gear - 1].cog, gear);
   } else {
-    snprintf(buffer, sizeof(buffer), "%d/%d", gear, (int)ZWIFT_GEAR_COUNT);
+    snprintf(buffer, sizeof(buffer), "%d/24", gear);
   }
   return std::string(buffer);
 }

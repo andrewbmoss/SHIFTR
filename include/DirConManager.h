@@ -29,6 +29,11 @@ class DirConManager {
   static String getStatusMessage();
   static TrainerMode getZwiftTrainerMode();
   static double getZwiftGradePercent();
+  // grade after smoothing (what the virtual-shifting model uses)
+  static double getSmoothedGradePercent() { return filteredGrade; }
+  // Cw handed to the trainer and the part of the air drag that didn't fit under its limit
+  static double getTrainerWindCoefficient() { return trainerWindCoefficient; }
+  static double getResidualDragForce() { return residualDragForce; }
   static double getZwiftGearRatio();
   static double getSimulatedGearRatio();
   static String getVirtualGearLabel();
@@ -84,7 +89,12 @@ class DirConManager {
   static uint16_t zwiftBicycleWeight;
   static uint16_t zwiftUserWeight;
 
-  static int64_t smoothedZwiftGrade;
+  static double filteredGrade;
+  static uint32_t filteredGradeAt;
+  static bool filteredGradeValid;
+  static double trainerWindCoefficient;
+  static double residualDragForce;
+  static double getFilteredGradePercent();
 
   static bool zwiftProtocolActive;
   static uint32_t blockedPassthroughWrites;
