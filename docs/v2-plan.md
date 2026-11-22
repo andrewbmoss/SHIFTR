@@ -257,3 +257,27 @@ extension characteristic (A026E005…) but nothing arrives on it.
 **Fixed in alpha.1:** *Copy report* didn't work (the browser clipboard API needs https;
 now falls back to the older copy method, plus a *Download report* button); connection
 retries.
+
+## Phase 1: logger (`v2.0.0-alpha.2-ftms`)
+
+**Bridge** (`src/Telemetry.cpp`):
+- 1 Hz samples, 76 bytes each, 240 kept (4 minutes, 18 KB), plus 96 events × 48 bytes (5 KB).
+  Both are allocated at boot, before Bluetooth starts.
+- `GET /log/info`: version, boot id, buffer sizes, column names.
+- `GET /log?s=<next sample>&e=<next event>`: chunked text, at most 120 rows of each per
+  response, with `G` lines for overwritten rows and `M,1` when more is waiting.
+- `POST /log/marker` (`text=…`).
+- Events: boot (with reset reason), trainer connected/disconnected, FTMS control
+  granted/refused/lost, failed trainer commands, Zwift connected/disconnected, mode
+  changes, shifts, ERG targets, settings saved, probe results, markers.
+- Status page shows whether a logger is fetching.
+
+**Browser** (`/logger`): nothing to install.
+- A Web Worker ticks every second, so Chrome's background-tab throttling doesn't apply.
+- Rows go into IndexedDB as they arrive, so a reload or crash loses nothing that was
+  already fetched; a recording that was running resumes when the page reopens.
+- A bridge reboot and any gap are written into the log as events.
+- *Download CSV* gives one file per recording: `pc_time,row,<41 sample columns>,event,detail`.
+  `row` is `sample` or `event`, so a filter in Excel separates them.
+- The File System Access API (writing straight to a file) needs https, which the bridge
+  doesn't have, so the page doesn't use it.

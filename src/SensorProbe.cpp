@@ -3,6 +3,7 @@
 #include <BTDeviceManager.h>
 #include <TrainerControl.h>
 #include <TrainerProtocol.h>
+#include <Telemetry.h>
 #include <esp_heap_caps.h>
 
 #include <mutex>
@@ -103,6 +104,7 @@ void setState(State newState) {
 }
 
 void fail(const String& message) {
+  Telemetry::eventf(TelemetryEvent::PROBE, "failed: %s", message.c_str());
   std::lock_guard<std::mutex> guard(lock);
   failure = message;
   state = State::FAILED;
@@ -343,6 +345,7 @@ void probeTask(void*) {
   trainerAfter = TrainerControl::getPacketSummary();
   trainerConnectedAfter = BTDeviceManager::isConnected();
   if (ok) {
+    Telemetry::eventf(TelemetryEvent::PROBE, "%s %u packets", chosenName.c_str(), (unsigned)packetCount);
     setState(State::DONE);
   } else {
     fail("Connected, but couldn't subscribe to power measurements (no Cycling Power Measurement with a notification descriptor)");

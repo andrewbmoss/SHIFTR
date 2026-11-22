@@ -17,6 +17,7 @@
 #include <ArduinoOTA.h>
 #include <TrainerControl.h>
 #include <SensorProbe.h>
+#include <Telemetry.h>
 #include <esp_heap_caps.h>
 
 #define STR_HELPER(x) #x
@@ -55,6 +56,9 @@ ServiceManager serviceManager;
 void setup() {
   log_i(DEVICE_NAME_PREFIX " " VERSION " starting...");
   log_i("Device name: %s, host name: %s", Utils::getDeviceName().c_str(), Utils::getFQDN().c_str());
+
+  // logger buffers first, while the heap is one big block
+  Telemetry::begin();
 
   // initialize bluetooth device manager
   BTDeviceManager::setLocalDeviceName(Utils::getDeviceName());
@@ -104,6 +108,10 @@ void setup() {
   webServer.on("/style.css", [] { handleWebServerFile("style.css"); });
   webServer.on("/", [] { handleWebServerFile("index.html"); });
   webServer.on("/probe", HTTP_GET, [] { handleWebServerFile("probe.html"); });
+  webServer.on("/logger", HTTP_GET, [] { handleWebServerFile("logger.html"); });
+  webServer.on("/log", HTTP_GET, [] { Telemetry::handleLog(webServer); });
+  webServer.on("/log/info", HTTP_GET, [] { Telemetry::handleInfo(webServer); });
+  webServer.on("/log/marker", HTTP_POST, [] { Telemetry::handleMarker(webServer); });
   webServer.on("/probe/report", HTTP_GET, [] { webServer.send(200, "application/json", SensorProbe::getReport()); });
   webServer.on("/probe/zwift", HTTP_GET, handleWebServerZwiftSnapshot);
   webServer.on("/probe/start", HTTP_POST, [] {
@@ -184,6 +192,7 @@ void setup() {
 }
 
 void loop() {
+  Telemetry::update();
   BTDeviceManager::update();
   TrainerControl::update();
   DirConManager::update();
@@ -291,6 +300,9 @@ extern const uint8_t index_html_end[] asm("_binary_src_web_index_html_end");
 extern const uint8_t settings_html_start[] asm("_binary_src_web_settings_html_start");
 extern const uint8_t settings_html_end[] asm("_binary_src_web_settings_html_end");
 
+extern const uint8_t logger_html_start[] asm("_binary_src_web_logger_html_start");
+extern const uint8_t logger_html_end[] asm("_binary_src_web_logger_html_end");
+
 extern const uint8_t probe_html_start[] asm("_binary_src_web_probe_html_start");
 extern const uint8_t probe_html_end[] asm("_binary_src_web_probe_html_end");
 
@@ -307,6 +319,9 @@ void handleWebServerFile(const String& fileName) {
   }
   if (fileName.equals("settings.html")) {
     webServer.send_P(200, "text/html", (char*)settings_html_start, (settings_html_end - settings_html_start));
+  }
+  if (fileName.equals("logger.html")) {
+    webServer.send_P(200, "text/html", (char*)logger_html_start, (logger_html_end - logger_html_start));
   }
   if (fileName.equals("probe.html")) {
     webServer.send_P(200, "text/html", (char*)probe_html_start, (probe_html_end - probe_html_start));
@@ -486,6 +501,7 @@ void handleWebServerSettingsPost() {
       SettingsManager::setFTMSEnabled(false);
     }
     iotWebConf.saveConfig();
+    Telemetry::event(TelemetryEvent::SETTINGS_SAVED, "");
     delay(500);
     ESP.restart();
   }
@@ -688,7 +704,7 @@ void handleWebServerLive() {
            "{\"trainer_connected\": %s, \"trainer_name\": \"%s\", \"protocol\": \"%s\", \"control\": %s, "
            "\"power\": %u, \"cadence\": %u, \"cadence_source\": \"%s\", \"speed_kph\": %.1f, \"data_age_ms\": %ld, "
            "\"zwift_clients\": %u, \"zwift_mode\": \"%s\", \"virtual_gear\": \"%s\", \"gear_ratio\": %.2f, \"model_power\": %.0f, \"drag_power\": %.0f, \"total_weight\": %.1f, \"trainer_weight\": %.1f, "
-           "\"zwift_grade\": %.2f, \"smoothed_grade\": %.2f, \"trainer_cw\": %.2f, \"residual_drag\": %.1f, \"trainer_command\": \"%s\", \"blocked_writes\": %lu, \"packets\": \"%s\"}",
+           "\"zwift_grade\": %.2f, \"smoothed_grade\": %.2f, \"trainer_cw\": %.2f, \"residual_drag\": %.1f, \"trainer_command\": \"%s\", \"blocked_writes\": %lu, \"packets\": \"%s\", \"logger_age_ms\": %ld}",
            BTDeviceManager::isConnected() ? "true" : "false",
            BTDeviceManager::getConnecedDeviceName().c_str(),
            TrainerControl::getProtocolName(),
@@ -712,7 +728,8 @@ void handleWebServerLive() {
            DirConManager::getResidualDragForce(),
            TrainerControl::getLastCommandDescription().c_str(),
            (unsigned long)DirConManager::getBlockedPassthroughWrites(),
-           TrainerControl::getPacketSummary().c_str());
+           TrainerControl::getPacketSummary().c_str(),
+           Telemetry::getMillisSinceLastFetch() == UINT32_MAX ? -1L : (long)Telemetry::getMillisSinceLastFetch());
   webServer.send(200, "application/json", buffer);
 }
 

@@ -49,6 +49,23 @@ version are in [CHANGELOG.md](CHANGELOG.md).
   units, and grade calculation could produce NaN at extreme gears.
 - Uses the maintained `esp32async/AsyncTCP` fork, and all library versions are pinned.
 
+## Logging to the PC (v2)
+
+Open `http://<bridge>/logger` in Chrome or Edge on the Zwift PC and click
+*Start logging*. Nothing needs to be installed. The page fetches everything the bridge
+knows once a second and keeps it in the browser until you click *Download CSV*.
+
+- Keep the tab open; it can sit in the background or another window. The bridge keeps
+  the last 4 minutes, so a slow or briefly closed tab loses nothing.
+- For long rides, stop the browser from putting the tab to sleep: Chrome *Settings >
+  Performance > Always keep these sites active*, or Edge *Settings > System and
+  performance > Never put these sites to sleep*, and add the bridge's address.
+- *Marker* adds a note to the log (e.g. "start ERG 200 W").
+- Each row has the PC's clock time, so it lines up with Zwift's FIT file
+  (Documents\Zwift\Activities) and a head unit's recording.
+
+Columns: see `docs/v2-plan.md`, "Phase 1".
+
 ## Virtual shifting feel (v1.5, v1.6)
 
 The goal is that every gear and every grade feels like a real bike: pedal torque at a

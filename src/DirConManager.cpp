@@ -2,6 +2,7 @@
 #include <BTDeviceManager.h>
 #include <Config.h>
 #include <DirConManager.h>
+#include <Telemetry.h>
 #include <ESPmDNS.h>
 #include <Service.h>
 #include <ServiceManagerCallbacks.h>
@@ -166,6 +167,7 @@ void DirConManager::handleNewClient(void *arg, AsyncClient *client) {
   bool clientAccepted = false;
   size_t clientAcceptedIndex = 0;
   log_i("New DirCon connection from %s", client->remoteIP().toString().c_str());
+  Telemetry::event(TelemetryEvent::ZWIFT_CONNECTED, client->remoteIP().toString().c_str());
   for (size_t clientIndex = 0; clientIndex < DIRCON_MAX_CLIENTS; clientIndex++) {
     if ((dirConClients[clientIndex] == nullptr) || ((dirConClients[clientIndex] != nullptr) && (!dirConClients[clientIndex]->connected()))) {
       dirConClients[clientIndex] = client;
@@ -231,6 +233,7 @@ void DirConManager::handleDirConError(void *arg, AsyncClient *client, int8_t err
 
 void DirConManager::handleDirConDisconnect(void *arg, AsyncClient *client) {
   log_i("DirCon client disconnected");
+  Telemetry::event(TelemetryEvent::ZWIFT_DISCONNECTED, "");
   removeSubscriptions(client);
 }
 
@@ -516,6 +519,7 @@ bool DirConManager::processZwiftSyncRequest(Service *service, Characteristic *ch
               zwiftPower = requestValues.at(0x00);
             }
             log_i("ERG target power: %d W", (int)zwiftPower);
+            Telemetry::eventf(TelemetryEvent::ERG_TARGET, "%d W", (int)zwiftPower);
             TrainerControl::setTargetPower(zwiftPower);
             break;
 
@@ -551,7 +555,11 @@ bool DirConManager::processZwiftSyncRequest(Service *service, Characteristic *ch
             if (requestValues.find(0x10) != requestValues.end()) {
               zwiftGearRatio = requestValues.at(0x10);
               if (zwiftGearRatio != 0) {
+                int previousGear = gearMapper.getGear();
                 gearMapper.map(zwiftGearRatio / 10000.0);
+                if (gearMapper.getGear() != previousGear) {
+                  Telemetry::event(TelemetryEvent::SHIFT, gearMapper.getLabel().c_str());
+                }
                 log_i("Virtual gear %s (Zwift ratio %.2f -> simulated %.2f)", gearMapper.getLabel().c_str(), zwiftGearRatio / 10000.0, gearMapper.getRatio());
               }
             }
@@ -1038,4 +1046,12 @@ String DirConManager::getZwiftTrafficReport() {
   }
   json += "]";
   return json;
+}
+
+uint16_t DirConManager::getErgTargetPower() {
+  return (zwiftTrainerMode == TrainerMode::ERG_MODE) ? (uint16_t)zwiftPower : 0;
+}
+
+int DirConManager::getVirtualGearIndex() {
+  return (zwiftTrainerMode == TrainerMode::SIM_MODE_VIRTUAL_SHIFTING) ? gearMapper.getGear() : 0;
 }

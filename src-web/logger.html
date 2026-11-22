@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="dark light">
+    <link rel="shortcut icon" type="image/x-icon" href="favicon.ico">
+    <link rel="stylesheet" type="text/css" href="style.css">
+    <title>SHIFTR logger</title>
+    <style>
+        .state { font-weight: bold; }
+        .ok { color: #2e9e4f; }
+        .warn { color: #d08b00; }
+        .bad { color: #d0342c; }
+        table.sessions { width: 100%; border-collapse: collapse; font-size: 14px; }
+        table.sessions td, table.sessions th { padding: 6px 4px; border-bottom: 1px solid rgba(128, 128, 128, 0.3); text-align: left; }
+        table.sessions button { padding: 4px 10px; margin: 2px; min-width: 0; }
+        .hint { font-size: 13px; opacity: 0.8; text-align: left; }
+        .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+        .row input[type=text] { flex: 1; min-width: 160px; }
+    </style>
+</head>
+
+<script type="text/javascript">
+    // ------------------------------------------------------------------------------------
+    // SHIFTR logger. Runs in the browser on the Zwift PC and needs nothing installed.
+    // Every second it fetches new rows from the bridge (/log), keeps them in the browser's
+    // own database (IndexedDB, survives a reload or a crash), and turns them into a CSV
+    // file when you click Download. A Web Worker drives the timing, because Chrome slows
+    // ordinary timers in background tabs to once a minute; the bridge keeps 4 minutes of
+    // rows, so even that loses nothing.
+    // ------------------------------------------------------------------------------------
+    const DB_NAME = 'shiftr-logger';
+    let db = null;
+    let info = null;          // /log/info
+    let session = null;       // active session record
+    let worker = null;
+    let busy = false;
+    let lastOkAt = 0;
+    let lastSample = null;
+    let failures = 0;
+    let sampleColumns = [];
+
+    function $(id) { return document.getElementById(id); }
+    function setHtml(id, html) { $(id).innerHTML = html; }
+
+    // ---------- IndexedDB ----------
+    function openDb() {
+        return new Promise((resolve, reject) => {
+            let request = indexedDB.open(DB_NAME, 1);
+            request.onupgradeneeded = () => {
+                let database = request.result;
+                database.createObjectStore('sessions', { keyPath: 'id', autoIncrement: true });
+                database.createObjectStore('rows', { keyPath: ['session', 'n'] });
+            };
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    function tx(stores, mode) { return db.transaction(stores, mode); }
+
+    function done(transaction) {
+        return new Promise((resolve, reject) => {
+            transaction.oncomplete = () => resolve();
+            transaction.onerror = () => reject(transaction.error);
+            transaction.onabort = () => reject(transaction.error);
+        });
+    }
+
+    function allSessions() {
+        return new Promise((resolve, reject) => {
+            let request = tx(['sessions'], 'readonly').objectStore('sessions').getAll();
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    async function saveSession() {
+        let transaction = tx(['sessions'], 'readwrite');
+        transaction.objectStore('sessions').put(session);
+        await done(transaction);
+    }
+
+    async function appendRows(lines) {
+        if (lines.length == 0) {
+            await saveSession();
+            return;
+        }
+        let transaction = tx(['sessions', 'rows'], 'readwrite');
+        let rows = transaction.objectStore('rows');
+        // rows come as {t, line}; keep each batch in time order (samples and events arrive separately)
+        let ordered = lines.map((row, index) => (typeof row == 'string') ? { t: 0, i: index, line: row } : { t: row.t, i: index, line: row.line });
+        ordered.sort((a, b) => (a.t - b.t) || (a.i - b.i));
+        for (let row of ordered) {
+            let line = row.line;
+            rows.put({ session: session.id, n: session.rows, line: line });
+            session.rows++;
+        }
+        transaction.objectStore('sessions').put(session);
+        await done(transaction);
+    }
+
+    // ---------- time and CSV ----------
+    function two(n) { return String(n).padStart(2, '0'); }
+    function localTime(ms) {
+        let d = new Date(ms);
+        return d.getFullYear() + '-' + two(d.getMonth() + 1) + '-' + two(d.getDate()) + ' ' + two(d.getHours()) + ':' + two(d.getMinutes()) + ':' + two(d.getSeconds()) + '.' + String(d.getMilliseconds()).padStart(3, '0');
+    }
+    function fileStamp(ms) {
+        let d = new Date(ms);
+        return d.getFullYear() + two(d.getMonth() + 1) + two(d.getDate()) + '-' + two(d.getHours()) + two(d.getMinutes());
+    }
+    function csvField(text) {
+        text = String(text);
+        return /[",\n]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
+    }
+
+    // one CSV for samples and events: pc_time,row,<sample columns>,event,detail
+    // sample rows leave event/detail empty; event rows only fill seq, uptime_ms, event, detail
+    function header(columns) { return 'pc_time,row,' + columns.join(',') + ',event,detail'; }
+    function sampleLine(pcTime, fields) { return localTime(pcTime) + ',sample,' + fields.join(',') + ',,'; }
+    function eventLine(pcTime, seq, uptime, name, detail) {
+        let blanks = ','.repeat(Math.max(0, session.columns.length - 2));
+        return localTime(pcTime) + ',event,' + seq + ',' + uptime + blanks + ',' + csvField(name) + ',' + csvField(detail);
+    }
+    // events made by this page itself (gaps, reloads, bridge reboots)
+    function localEvent(name, detail) { return { t: Date.now(), line: eventLine(Date.now(), '', '', name, detail) }; }
+
+    // ---------- fetching ----------
+    async function fetchInfo() {
+        let response = await fetch('/log/info', { cache: 'no-store' });
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        return await response.json();
+    }
+
+    async function poll() {
+        if (busy || !session || !session.active) return;
+        busy = true;
+        try {
+            let more = true;
+            let rounds = 0;
+            while (more && rounds < 10) {
+                rounds++;
+                more = await fetchOnce();
+            }
+            failures = 0;
+            lastOkAt = Date.now();
+        } catch (error) {
+            failures++;
+            if (failures == 3) {
+                await appendRows([localEvent('logger', 'bridge not reachable: ' + error.message)]);
+            }
+        } finally {
+            busy = false;
+            render();
+        }
+    }
+
+    // returns true when the bridge has more rows waiting
+    async function fetchOnce() {
+        let response = await fetch('/log?s=' + session.nextS + '&e=' + session.nextE, { cache: 'no-store' });
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        let text = await response.text();
+        let receivedAt = Date.now();
+        let lines = text.split('\n');
+        let out = [];
+        let uptimeNow = null;
+        let more = false;
+        for (let raw of lines) {
+            if (raw.length == 0) continue;
+            let fields = raw.split(',');
+            let kind = fields.shift();
+            if (kind == 'U') {
+                uptimeNow = Number(fields[0]);
+                let bootId = fields[1];
+                if (session.bootId && bootId != session.bootId) {
+                    out.push(localEvent('bridge_rebooted', 'new boot ' + bootId));
+                    session.reboots = (session.reboots || 0) + 1;
+                    // the new boot numbers its rows from 1 again
+                    session.bootId = bootId;
+                    session.nextS = 0;
+                    session.nextE = 0;
+                    await appendRows(out);
+                    return true;
+                }
+                session.bootId = bootId;
+            } else if (kind == 'G') {
+                let what = fields[0] == 'S' ? 'samples' : 'events';
+                let from = Number(fields[1]), to = Number(fields[2]) - 1;
+                if (session.nextS > 0 || session.nextE > 0) {
+                    out.push(localEvent('gap', what + ' ' + from + '-' + to + ' were overwritten before they could be fetched'));
+                    session.gaps = (session.gaps || 0) + 1;
+                }
+            } else if (kind == 'S') {
+                let seq = Number(fields[0]);
+                let uptime = Number(fields[1]);
+                let pcTime = receivedAt - (uptimeNow - uptime);
+                out.push({ t: pcTime, line: sampleLine(pcTime, fields) });
+                session.nextS = seq + 1;
+                session.samples = (session.samples || 0) + 1;
+                lastSample = { pcTime: pcTime, fields: fields };
+            } else if (kind == 'E') {
+                let seq = Number(fields[0]);
+                let uptime = Number(fields[1]);
+                let name = fields[2];
+                let detail = fields.slice(3).join(',');
+                out.push({ t: receivedAt - (uptimeNow - uptime), line: eventLine(receivedAt - (uptimeNow - uptime), seq, uptime, name, detail) });
+                session.nextE = seq + 1;
+                session.events = (session.events || 0) + 1;
+            } else if (kind == 'M') {
+                more = fields[0] == '1';
+            }
+        }
+        session.lastAt = receivedAt;
+        await appendRows(out);
+        return more;
+    }
+
+    function startWorker() {
+        if (worker) return;
+        let source = 'let timer = null; onmessage = (m) => { if (m.data == "start" && !timer) { timer = setInterval(() => postMessage("tick"), 1000); } else if (m.data == "stop") { clearInterval(timer); timer = null; } };';
+        worker = new Worker(URL.createObjectURL(new Blob([source], { type: 'application/javascript' })));
+        worker.onmessage = () => poll();
+        worker.postMessage('start');
+    }
+
+    function stopWorker() {
+        if (!worker) return;
+        worker.postMessage('stop');
+        worker.terminate();
+        worker = null;
+    }
+
+    // ---------- actions ----------
+    async function startLogging() {
+        if (session && session.active) return;
+        try {
+            info = await fetchInfo();
+        } catch (error) {
+            setHtml('state', '<span class="bad">Bridge not reachable: ' + error.message + '</span>');
+            return;
+        }
+        if (!info.available) {
+            setHtml('state', '<span class="bad">The bridge has no logging memory (allocation failed at boot)</span>');
+            return;
+        }
+        let now = Date.now();
+        session = {
+            name: 'Ride ' + localTime(now).substring(0, 16),
+            started: now, stopped: null, active: true,
+            bridge: location.host, version: info.version, bootId: info.boot_id,
+            columns: info.sample_columns.split(','),
+            // start with what the bridge still has: up to 4 minutes before Start
+            nextS: info.sample_oldest, nextE: info.event_oldest,
+            rows: 0, samples: 0, events: 0, gaps: 0, reboots: 0, lastAt: null
+        };
+        let transaction = tx(['sessions'], 'readwrite');
+        let request = transaction.objectStore('sessions').add(session);
+        request.onsuccess = () => { session.id = request.result; };
+        await done(transaction);
+        sampleColumns = session.columns;
+        await appendRows([localEvent('logger', 'started; bridge ' + info.version)]);
+        fetch('/log/marker', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'text=' + encodeURIComponent('logger started') }).catch(() => {});
+        startWorker();
+        poll();
+        await listSessions();
+    }
+
+    async function stopLogging() {
+        if (!session) return;
+        stopWorker();
+        // fetch what's left
+        session.active = true;
+        await poll();
+        session.active = false;
+        session.stopped = Date.now();
+        await appendRows([localEvent('logger', 'stopped')]);
+        session = null;
+        render();
+        await listSessions();
+    }
+
+    async function addMarker() {
+        let text = $('marker').value.trim() || 'marker';
+        try {
+            let response = await fetch('/log/marker', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'text=' + encodeURIComponent(text) });
+            if (!response.ok) throw new Error('HTTP ' + response.status);
+            $('marker').value = '';
+            setHtml('marker_state', 'Added: ' + text.replace(/</g, '&lt;'));
+        } catch (error) {
+            setHtml('marker_state', '<span class="bad">Not added: ' + error.message + '</span>');
+        }
+    }
+
+    function readRows(id) {
+        return new Promise((resolve, reject) => {
+            let lines = [];
+            let range = IDBKeyRange.bound([id, 0], [id, Number.MAX_SAFE_INTEGER]);
+            let request = tx(['rows'], 'readonly').objectStore('rows').openCursor(range);
+            request.onsuccess = () => {
+                let cursor = request.result;
+                if (cursor) {
+                    lines.push(cursor.value.line);
+                    cursor.continue();
+                } else {
+                    resolve(lines);
+                }
+            };
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    async function download(id) {
+        let sessions = await allSessions();
+        let record = sessions.find(s => s.id == id);
+        if (!record) return;
+        let lines = await readRows(id);
+        let text = header(record.columns) + '\n' + lines.join('\n') + '\n';
+        let blob = new Blob([text], { type: 'text/csv' });
+        let link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = 'shiftr-log-' + fileStamp(record.started) + '.csv';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        setTimeout(() => URL.revokeObjectURL(link.href), 5000);
+    }
+
+    let pendingDelete = null;
+    async function removeSession(id) {
+        if (session && session.id == id) return;
+        if (pendingDelete != id) {
+            pendingDelete = id;
+            await listSessions();
+            return;
+        }
+        pendingDelete = null;
+        let transaction = tx(['sessions', 'rows'], 'readwrite');
+        transaction.objectStore('rows').delete(IDBKeyRange.bound([id, 0], [id, Number.MAX_SAFE_INTEGER]));
+        transaction.objectStore('sessions').delete(id);
+        await done(transaction);
+        await listSessions();
+    }
+
+    // ---------- display ----------
+    function duration(ms) {
+        let s = Math.max(0, Math.round(ms / 1000));
+        return Math.floor(s / 3600) + ':' + two(Math.floor(s / 60) % 60) + ':' + two(s % 60);
+    }
+
+    function column(name) {
+        if (!lastSample) return '';
+        let index = sampleColumns.indexOf(name);
+        return index >= 0 ? lastSample.fields[index] : '';
+    }
+
+    function render() {
+        $('start_btn').disabled = !!(session && session.active);
+        $('stop_btn').disabled = !(session && session.active);
+        if (!session || !session.active) {
+            setHtml('state', 'Not logging');
+            setHtml('stats', '');
+            setHtml('live', '');
+            return;
+        }
+        let age = lastOkAt ? Date.now() - lastOkAt : null;
+        let state = (age !== null && age < 5000) ? '<span class="ok">Logging</span>'
+            : (age !== null && age < 90000) ? '<span class="warn">Logging, last fetch ' + Math.round(age / 1000) + ' s ago</span>'
+                : '<span class="bad">Waiting for the bridge…</span>';
+        setHtml('state', state);
+        setHtml('stats', session.name + ' &middot; ' + duration(Date.now() - session.started) + ' &middot; ' + (session.samples || 0) + ' samples, ' + (session.events || 0) + ' events'
+            + (session.gaps ? ' &middot; <span class="warn">' + session.gaps + ' gap(s)</span>' : '')
+            + (session.reboots ? ' &middot; <span class="warn">bridge rebooted ' + session.reboots + '×</span>' : ''));
+        if (lastSample) {
+            let heap = Number(column('free_heap'));
+            setHtml('live', column('tr_power') + ' W &middot; ' + column('tr_cadence') + ' rpm &middot; ' + column('mode')
+                + (column('gear') != '0' ? ' &middot; gear ' + column('gear') : '')
+                + ' &middot; grade ' + column('grade') + ' % &middot; free memory ' + (heap / 1024).toFixed(0) + ' KB');
+        }
+    }
+
+    async function listSessions() {
+        let sessions = (await allSessions()).sort((a, b) => b.started - a.started);
+        if (sessions.length == 0) {
+            setHtml('sessions', '<div class="hint">No recordings yet.</div>');
+            return;
+        }
+        let html = '<table class="sessions"><tr><th>Recording</th><th>Length</th><th>Rows</th><th></th></tr>';
+        for (let s of sessions) {
+            let end = s.active ? (s.lastAt || Date.now()) : (s.stopped || s.lastAt || s.started);
+            let active = session && session.active && session.id == s.id;
+            html += '<tr><td>' + s.name.replace(/</g, '&lt;') + (active ? ' <span class="ok">(recording)</span>' : '') + '</td><td>' + duration(end - s.started) + '</td><td>' + s.rows + '</td><td>'
+                + '<button class="btn" onclick="download(' + s.id + ')"><label>Download CSV</label></button>'
+                + (active ? '' : '<button class="btn" onclick="removeSession(' + s.id + ')"><label>' + (pendingDelete == s.id ? 'Really delete?' : 'Delete') + '</label></button>')
+                + '</td></tr>';
+        }
+        html += '</table>';
+        setHtml('sessions', html);
+    }
+
+    async function setup() {
+        try {
+            db = await openDb();
+        } catch (error) {
+            setHtml('state', '<span class="bad">This browser won\'t store data for this page: ' + error + '</span>');
+            return;
+        }
+        try {
+            info = await fetchInfo();
+            setHtml('bridge', info.version + ', keeps ' + Math.round(info.sample_capacity * info.sample_interval_ms / 60000) + ' minutes');
+        } catch (error) {
+            setHtml('bridge', '<span class="bad">not reachable</span>');
+        }
+        // a recording that was running when the page was closed, reloaded or put to sleep carries on
+        let sessions = await allSessions();
+        let running = sessions.filter(s => s.active).sort((a, b) => b.started - a.started);
+        for (let i = 1; i < running.length; i++) {
+            running[i].active = false;
+            let transaction = tx(['sessions'], 'readwrite');
+            transaction.objectStore('sessions').put(running[i]);
+            await done(transaction);
+        }
+        if (running.length > 0) {
+            session = running[0];
+            sampleColumns = session.columns;
+            await appendRows([localEvent('logger', 'resumed after the page was reloaded')]);
+            startWorker();
+            poll();
+        }
+        await listSessions();
+        render();
+        setInterval(render, 1000);
+        setInterval(() => { if (session && session.active) listSessions(); }, 15000);
+    }
+
+    window.addEventListener('beforeunload', (event) => {
+        if (session && session.active) {
+            event.preventDefault();
+            event.returnValue = '';
+        }
+    });
+</script>
+
+<body onLoad="setup()">
+    <div class="container">
+        <h1>Logger</h1>
+        <div class="form">
+            <div>Bridge: <span id="bridge"></span> &middot; <a href="/">Back to status</a></div>
+            <div class="state" id="state">Loading…</div>
+            <div id="stats"></div>
+            <div id="live"></div>
+            <div class="button-container">
+                <button class="btn" id="start_btn" onclick="startLogging()"><label>Start logging</label></button>
+                <button class="btn" id="stop_btn" onclick="stopLogging()" disabled><label>Stop</label></button>
+            </div>
+        </div>
+    </div>
+
+    <div class="container">
+        <h1>Marker</h1>
+        <div class="form">
+            <div class="row">
+                <input type="text" id="marker" placeholder="e.g. start ERG 200 W" maxlength="39" onkeydown="if (event.key == 'Enter') addMarker()">
+                <button class="btn" onclick="addMarker()"><label>Add</label></button>
+            </div>
+            <div id="marker_state" class="hint"></div>
+        </div>
+    </div>
+
+    <div class="container">
+        <h1>Recordings</h1>
+        <div class="form">
+            <div id="sessions"></div>
+            <p class="hint">Recordings are kept in this browser until you delete them. <i>Download CSV</i> works while
+                recording too. Each row has the PC's clock time, so it lines up with Zwift's activity file and your head
+                unit's recording.</p>
+            <p class="hint">Keep this tab open while riding; it can be in the background or another window. To stop
+                the browser from putting it to sleep on long rides, add the bridge's address under Chrome
+                <i>Settings &gt; Performance &gt; Always keep these sites active</i>, or Edge <i>Settings &gt; System
+                and performance &gt; Never put these sites to sleep</i>. If it does get closed or reloaded, it carries on
+                where it left off, and anything older than 4 minutes is marked as a gap.</p>
+        </div>
+    </div>
+</body>
+
+</html>

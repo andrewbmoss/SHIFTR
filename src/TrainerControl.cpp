@@ -3,6 +3,7 @@
 #include <Config.h>
 #include <SettingsManager.h>
 #include <TrainerControl.h>
+#include <Telemetry.h>
 #include <UUIDs.h>
 
 using namespace TrainerProtocol;
@@ -67,6 +68,7 @@ void TrainerControl::onConnected(bool hasFTMS, bool hasFEC) {
   }
   log_i("Trainer services: FTMS=%d FE-C=%d, preference=%d -> using %s", hasFTMS, hasFEC, (int)preference,
         selected == TrainerProtocolType::FTMS ? "FTMS" : (selected == TrainerProtocolType::FEC ? "FE-C" : "nothing (pass-through only)"));
+  Telemetry::event(TelemetryEvent::TRAINER_CONNECTED, selected == TrainerProtocolType::FTMS ? "FTMS" : (selected == TrainerProtocolType::FEC ? "FE-C" : "pass-through only"));
 
   resistanceRangeKnown = false;
   if (selected == TrainerProtocolType::FTMS) {
@@ -111,6 +113,7 @@ void TrainerControl::onConnected(bool hasFTMS, bool hasFEC) {
 }
 
 void TrainerControl::onDisconnected() {
+  Telemetry::event(TelemetryEvent::TRAINER_DISCONNECTED, "");
   portENTER_CRITICAL(&lock);
   protocol = TrainerProtocolType::NONE;
   controlGranted = false;
@@ -367,6 +370,7 @@ void TrainerControl::onNotify(const NimBLEUUID& characteristicUUID, const uint8_
   } else if (characteristicUUID.equals(NimBLEUUID(FITNESS_MACHINE_STATUS_CHARACTERISTIC_UUID))) {
     if ((length > 0) && ((data[0] == FTMS_STATUS_CONTROL_PERMISSION_LOST) || (data[0] == FTMS_STATUS_RESET))) {
       log_w("FTMS control lost (status 0x%02X), will request it again", data[0]);
+      Telemetry::eventf(TelemetryEvent::CONTROL_LOST, "status 0x%02X", data[0]);
       portENTER_CRITICAL(&lock);
       startSent = false;
       controlGranted = false;
@@ -386,10 +390,16 @@ void TrainerControl::handleControlPointResponse(const uint8_t* data, size_t leng
     controlRequestPending = false;
     controlGranted = (response.resultCode == FTMS_RESULT_SUCCESS);
     log_i("FTMS control %s (result %d)", controlGranted ? "granted" : "refused", response.resultCode);
+    if (controlGranted) {
+      Telemetry::event(TelemetryEvent::CONTROL_GRANTED, "");
+    } else {
+      Telemetry::eventf(TelemetryEvent::CONTROL_REFUSED, "result %d", response.resultCode);
+    }
     return;
   }
   if (response.resultCode == FTMS_RESULT_CONTROL_NOT_PERMITTED) {
     log_w("FTMS command 0x%02X refused: control not permitted, requesting control again", response.requestOpCode);
+    Telemetry::eventf(TelemetryEvent::CONTROL_LOST, "command 0x%02X not permitted", response.requestOpCode);
     portENTER_CRITICAL(&lock);
     controlGranted = false;
     controlRequestPending = false;
@@ -397,6 +407,7 @@ void TrainerControl::handleControlPointResponse(const uint8_t* data, size_t leng
     portEXIT_CRITICAL(&lock);
   } else if (response.resultCode != FTMS_RESULT_SUCCESS) {
     log_w("FTMS command 0x%02X failed with result %d", response.requestOpCode, response.resultCode);
+    Telemetry::eventf(TelemetryEvent::COMMAND_FAILED, "op 0x%02X result %d", response.requestOpCode, response.resultCode);
   }
 }
 
@@ -491,4 +502,20 @@ String TrainerControl::getPacketSummary() {
   snprintf(buffer, sizeof(buffer), "FTMS %lu / power meter %lu / FE-C %lu",
            (unsigned long)packetsIndoorBikeData, (unsigned long)packetsCyclingPower, (unsigned long)packetsFEC);
   return String(buffer);
+}
+
+void TrainerControl::getPacketCounts(uint32_t& indoorBikeData, uint32_t& cyclingPower, uint32_t& fec) {
+  indoorBikeData = packetsIndoorBikeData;
+  cyclingPower = packetsCyclingPower;
+  fec = packetsFEC;
+}
+
+TrainerControl::CommandSnapshot TrainerControl::getLastSentCommand() {
+  CommandSnapshot snapshot;
+  portENTER_CRITICAL(&lock);
+  snapshot.type = (uint8_t)lastSentCommand.type;
+  snapshot.value1 = lastSentCommand.value1;
+  snapshot.value3 = lastSentCommand.value3;
+  portEXIT_CRITICAL(&lock);
+  return snapshot;
 }

@@ -2,6 +2,7 @@
 <html lang="en">
 
 <head>
+    <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="color-scheme" content="dark light">
     <link rel="shortcut icon" type="image/x-icon" href="favicon.ico">
@@ -139,6 +140,7 @@
                 setText('live_drag', live.trainer_cw > 0 ? ('Cw ' + live.trainer_cw.toFixed(2) + ' kg/m to trainer' + (live.residual_drag > 0.5 ? ' <small>(+' + live.residual_drag.toFixed(0) + ' N over the limit, added to the grade)</small>' : '')) : '-');
                 setText('live_command', live.trainer_command);
                 setText('live_blocked', live.blocked_writes);
+                setText('live_logger', (live.logger_age_ms >= 0 && live.logger_age_ms < 90000) ? 'recording (last fetch ' + Math.round(live.logger_age_ms / 1000) + ' s ago)' : '<a href="/logger">not recording</a>');
                 setText('live_packets', live.packets);
                 document.getElementById('live_container').style = '';
             })
@@ -187,6 +189,7 @@
                 <div class="form-control"><label>Sent to trainer:</label><span id="live_command"></span></div>
                 <div class="form-control"><label>Data received:</label><span id="live_packets"></span></div>
                 <div class="form-control"><label>Blocked writes:</label><span id="live_blocked"></span></div>
+                <div class="form-control"><label>Logger:</label><span id="live_logger"></span></div>
             </div>
         </div>
         <h1>Calibration</h1>
@@ -258,7 +261,7 @@
             &copy; SHIFTR contributors, GPL-3.0.
             <br>Saris FTMS fork: <a href="https://github.com/andrewbmoss/SHIFTR">andrewbmoss/SHIFTR</a>.
             Report bugs for this version <a href="https://github.com/andrewbmoss/SHIFTR/issues">there</a>.
-            <br><a href="/probe">Diagnostics</a>
+            <br><a href="/logger">Logger</a> &middot; <a href="/probe">Diagnostics</a>
             <br>
         </div>
     </div>

@@ -63,6 +63,14 @@ class TrainerControl {
   static uint32_t getMillisSinceLastData();
   // packets received per source since connecting, for the status page
   static String getPacketSummary();
+  static void getPacketCounts(uint32_t& indoorBikeData, uint32_t& cyclingPower, uint32_t& fec);
+  // the command most recently written to the trainer: type 0 none, 1 simulation, 2 target power, 3 resistance
+  struct CommandSnapshot {
+    uint8_t type = 0;
+    double value1 = 0;  // grade %, watts or resistance %
+    double value3 = 0;  // cw (simulation)
+  };
+  static CommandSnapshot getLastSentCommand();
 
  private:
   enum class CommandType : uint8_t { NONE, SIMULATION, TARGET_POWER, RESISTANCE };

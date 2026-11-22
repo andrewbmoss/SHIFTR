@@ -103,6 +103,13 @@ std::string BTDeviceManager::getConnectedAddress() {
   return "";
 }
 
+int BTDeviceManager::getRssi() {
+  if (connected && (nimBLEClient != nullptr) && nimBLEClient->isConnected()) {
+    return nimBLEClient->getRssi();
+  }
+  return 0;
+}
+
 bool BTDeviceManager::isStarted() {
   return started;
 }

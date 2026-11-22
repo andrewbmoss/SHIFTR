@@ -47,6 +47,8 @@ class DirConManager {
   static uint32_t getBlockedPassthroughWrites();
   static double getDefaultGearRatio();
   static String getZwiftTrafficReport();
+  static uint16_t getErgTargetPower();
+  static int getVirtualGearIndex();
 
  private:
   friend class DirConServiceManagerCallbacks;
