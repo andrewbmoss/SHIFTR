@@ -64,12 +64,73 @@
         document.getElementById(id).innerHTML = value;
     }
 
+
+    // Calibration: compare the trainer's measured power with the power the simulated bike needs,
+    // averaged over 30 s of steady riding (same gear, same grade, pedalling).
+    const CAL_SAMPLES = 30;
+    const CAL_MIN_SAMPLES = 20;
+    let cal = [];
+
+    function updateCalibration(live) {
+        let virtual = live.zwift_mode.indexOf('virtual') >= 0;
+        let model = live.model_power;
+        let why = '';
+        if (!virtual) {
+            why = 'only while Zwift is in SIM with virtual shifting (ride in a free ride or route, not ERG)';
+        } else if (live.cadence < 50) {
+            why = 'start pedalling (over 50 rpm)';
+        } else if (model <= 0) {
+            why = 'descending, the simulated bike needs no power';
+        }
+        setText('live_model', why ? '<small>' + why + '</small>' : model + ' W');
+
+        let sample = { power: live.power, model: model, drag: live.drag_power, grade: live.smoothed_grade, gear: live.virtual_gear };
+        if (why || (cal.length > 0 && (sample.gear != cal[0].gear || Math.abs(sample.grade - cal[0].grade) > 1.0))) {
+            cal = [];
+        }
+        if (!why) {
+            cal.push(sample);
+            if (cal.length > CAL_SAMPLES) cal.shift();
+        }
+
+        let conversion = live.trainer_weight > 0 ? live.trainer_weight : live.total_weight;
+        let weightText = live.trainer_weight > 0 ? (live.trainer_weight.toFixed(0) + ' kg') : ('0 = Zwift weight (' + live.total_weight.toFixed(0) + ' kg)');
+        setText('live_trainer_weight', weightText);
+
+        if (cal.length < CAL_MIN_SAMPLES) {
+            setText('live_average', why ? '-' : '<small>hold this gear and grade: ' + cal.length + ' / ' + CAL_MIN_SAMPLES + ' s</small>');
+            setText('live_suggestion', '<small>Ride a steady climb of 4 % or more in one gear for 30 s</small>');
+            return;
+        }
+        let avg = (key) => cal.reduce((sum, s) => sum + s[key], 0) / cal.length;
+        let power = avg('power'), modelAvg = avg('model'), drag = avg('drag'), grade = avg('grade');
+        let ratio = power / modelAvg * 100;
+        setText('live_average', power.toFixed(0) + ' W measured, ' + modelAvg.toFixed(0) + ' W simulated = <b>' + ratio.toFixed(0) + ' %</b> <small>(last ' + cal.length + ' s)</small>');
+
+        // trainer weight only scales the part that goes to the trainer as a grade, not the air drag
+        let gradePart = modelAvg - drag;
+        if (grade < 3.5 || gradePart < 0.6 * modelAvg) {
+            setText('live_suggestion', '<small>Needs a climb of 4 % or more (now ' + grade.toFixed(1) + ' %). On the flat this compares air drag instead: within about 10 % means the trainer applies it correctly.</small>');
+            return;
+        }
+        let share = (power - drag) / gradePart;
+        if (Math.abs(share - 1) <= 0.05) {
+            setText('live_suggestion', '<b>Matches</b> within 5 %, nothing to change');
+            return;
+        }
+        let suggested = Math.round(conversion * share);
+        suggested = Math.min(250, Math.max(30, suggested));
+        setText('live_suggestion', 'Set <b>Trainer weight</b> to <b>' + suggested + ' kg</b> in Settings <small>(trainer is ' + (share > 1 ? 'harder' : 'easier') + ' than the simulated bike on this climb)</small>');
+    }
+
     function updateLive() {
         fetch('/live', { method: 'GET', cache: 'no-store', headers: { 'Accept': 'application/json' } })
             .then(response => response.json())
             .then(live => {
                 setText('live_trainer', live.trainer_connected ? (live.trainer_name + ' via ' + live.protocol + (live.protocol == 'FTMS' ? (live.control ? ' (control granted)' : ' (no control yet)') : '')) : 'Not connected');
-                setText('live_power', live.power + ' W' + (live.model_power > 0 ? ' <small>(simulated bike needs ' + live.model_power + ' W)</small>' : ''));
+                setText('live_power', live.power + ' W');
+                setText('live_power_cal', live.power + ' W');
+                updateCalibration(live);
                 setText('live_cadence', live.cadence + ' rpm <small>(' + live.cadence_source + ')</small>');
                 setText('live_speed', live.speed_kph.toFixed(1) + ' km/h');
                 setText('live_zwift', live.zwift_clients > 0 ? (live.zwift_mode + ', ' + live.zwift_clients + ' connection(s)') : 'Not connected');
@@ -82,7 +143,7 @@
                 document.getElementById('live_container').style = '';
             })
             .catch(reason => {})
-            .finally(setTimeout(updateLive, 1000));
+            .finally(() => setTimeout(updateLive, 1000));
     }
 
     function setup() {
@@ -126,6 +187,16 @@
                 <div class="form-control"><label>Sent to trainer:</label><span id="live_command"></span></div>
                 <div class="form-control"><label>Data received:</label><span id="live_packets"></span></div>
                 <div class="form-control"><label>Blocked writes:</label><span id="live_blocked"></span></div>
+            </div>
+        </div>
+        <h1>Calibration</h1>
+        <div class="form">
+            <div>
+                <div class="form-control"><label>Measured power:</label><span id="live_power_cal"></span></div>
+                <div class="form-control"><label>Simulated bike needs:</label><span id="live_model"></span></div>
+                <div class="form-control"><label>30 s average:</label><span id="live_average"></span></div>
+                <div class="form-control"><label>Trainer weight now:</label><span id="live_trainer_weight"></span></div>
+                <div class="form-control"><label>Suggestion:</label><span id="live_suggestion"></span></div>
             </div>
         </div>
     </div>

@@ -36,6 +36,7 @@ uint16_t DirConManager::zwiftUserWeight;
 double DirConManager::filteredGrade;
 double DirConManager::trainerWindCoefficient;
 double DirConManager::residualDragForce;
+double DirConManager::trainerDragPower;
 uint32_t DirConManager::filteredGradeAt;
 bool DirConManager::filteredGradeValid;
 
@@ -96,6 +97,7 @@ void DirConManager::resetValues() {
   filteredGradeValid = false;
   trainerWindCoefficient = 0;
   residualDragForce = 0;
+  trainerDragPower = 0;
   zwiftProtocolActive = false;
   zwiftCw = Calculations::windResistanceCoefficient;
   zwiftCrr = Calculations::rollingResistanceCoefficient;
@@ -634,6 +636,9 @@ double DirConManager::getFilteredGradePercent() {
 
 void DirConManager::updateSIMModeResistance() {
   // normal SIM mode w/o virtual shifting: just pass the grade on
+  trainerWindCoefficient = 0;
+  residualDragForce = 0;
+  trainerDragPower = 0;
   if (zwiftTrainerMode == TrainerMode::SIM_MODE) {
     TrainerControl::setSimulation(zwiftGrade / 100.0, zwiftCrr, zwiftCw);
     modelPower = 0;
@@ -664,6 +669,8 @@ void DirConManager::updateSIMModeResistance() {
                                                                               maxWindCoefficient, SettingsManager::getTrainerWeight());
       trainerWindCoefficient = simulation.windCoefficient;
       residualDragForce = simulation.residualForce;
+      double trainerSpeed = Calculations::calculateSpeed(cadence, Calculations::wheelDiameter, defaultGearRatio);
+      trainerDragPower = 0.5 * trainerWindCoefficient * trainerSpeed * trainerSpeed * trainerSpeed;
       TrainerControl::setSimulation(simulation.grade, 0, simulation.windCoefficient);
     }
   }

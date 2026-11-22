@@ -97,14 +97,25 @@ speed: try the small ring.
 
 The FTMS standard has no field for rider weight, so the trainer turns the grade into
 force using a weight of its own. Since v1.6 that weight only affects gravity and rolling
-resistance (air drag is now separate), so calibrate **on a steady climb of 4 % or
-more**, not on the flat. The *Ride* panel shows the measured power next to *simulated
-bike needs … W*. Hold one gear and cadence for 20–30 s:
+resistance (air drag is sent separately), so calibrate **on a steady climb of 4 % or
+more**.
 
-- If both numbers roughly agree, there's nothing to do.
-- If the measured power is consistently a fixed share of the model, for example 115 %,
-  set *Trainer weight* to your Zwift rider + bike weight divided by that share
-  (84 kg / 1.15 ≈ 73 kg).
+The status page has a **Calibration** section under *Ride*:
+
+1. In Zwift, ride a free ride or route (not ERG) with virtual shifting, and find a
+   steady climb of 4 % or more.
+2. Stay in one gear at a steady cadence. *Simulated bike needs* shows what a real bike
+   in that gear would take; *30 s average* fills up after 20 s and resets when you shift
+   or the grade changes by more than 1 %.
+3. *Suggestion* then says either *Matches* or *Set Trainer weight to … kg*. Enter that
+   in *Settings > Trainer weight*, save, and check again on the next climb.
+
+The maths behind the suggestion: if the trainer is 15 % too hard on the climb, it is
+using a weight 15 % higher than the bridge assumed, so the bridge must assume that
+higher weight too (84 kg × 1.15 ≈ 97 kg). The air drag part is subtracted first.
+
+On the flat the *30 s average* compares mainly air drag: within about 10 % means the
+trainer applies the Cw it is sent.
 
 *Difficulty* scales only the grade (like Zwift's trainer difficulty). Leave it at 100 %
 for real-world hills, or lower it if you want climbs gentler than the road.

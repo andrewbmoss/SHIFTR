@@ -34,6 +34,10 @@ class DirConManager {
   // Cw handed to the trainer and the part of the air drag that didn't fit under its limit
   static double getTrainerWindCoefficient() { return trainerWindCoefficient; }
   static double getResidualDragForce() { return residualDragForce; }
+  // power the trainer should be absorbing through that Cw (the part trainer weight doesn't affect)
+  static double getTrainerDragPower() { return trainerDragPower; }
+  // Zwift rider + bike weight in kg
+  static double getTotalWeight() { return (zwiftBicycleWeight + zwiftUserWeight) / 100.0; }
   static double getZwiftGearRatio();
   static double getSimulatedGearRatio();
   static String getVirtualGearLabel();
@@ -94,6 +98,7 @@ class DirConManager {
   static bool filteredGradeValid;
   static double trainerWindCoefficient;
   static double residualDragForce;
+  static double trainerDragPower;
   static double getFilteredGradePercent();
 
   static bool zwiftProtocolActive;

@@ -608,7 +608,7 @@ void handleWebServerDebug() {
 }
 // Live ride data for the status page, polled once per second
 void handleWebServerLive() {
-  char buffer[768];
+  char buffer[1024];
   const char* zwiftMode = "SIM";
   switch (DirConManager::getZwiftTrainerMode()) {
     case TrainerMode::SIM_MODE_VIRTUAL_SHIFTING:
@@ -629,7 +629,7 @@ void handleWebServerLive() {
   snprintf(buffer, sizeof(buffer),
            "{\"trainer_connected\": %s, \"trainer_name\": \"%s\", \"protocol\": \"%s\", \"control\": %s, "
            "\"power\": %u, \"cadence\": %u, \"cadence_source\": \"%s\", \"speed_kph\": %.1f, \"data_age_ms\": %ld, "
-           "\"zwift_clients\": %u, \"zwift_mode\": \"%s\", \"virtual_gear\": \"%s\", \"gear_ratio\": %.2f, \"model_power\": %.0f, "
+           "\"zwift_clients\": %u, \"zwift_mode\": \"%s\", \"virtual_gear\": \"%s\", \"gear_ratio\": %.2f, \"model_power\": %.0f, \"drag_power\": %.0f, \"total_weight\": %.1f, \"trainer_weight\": %.1f, "
            "\"zwift_grade\": %.2f, \"smoothed_grade\": %.2f, \"trainer_cw\": %.2f, \"residual_drag\": %.1f, \"trainer_command\": \"%s\", \"blocked_writes\": %lu, \"packets\": \"%s\"}",
            BTDeviceManager::isConnected() ? "true" : "false",
            BTDeviceManager::getConnecedDeviceName().c_str(),
@@ -645,6 +645,9 @@ void handleWebServerLive() {
            DirConManager::getVirtualGearLabel().c_str(),
            DirConManager::getSimulatedGearRatio(),
            DirConManager::getModelPower(),
+           DirConManager::getTrainerDragPower(),
+           DirConManager::getTotalWeight(),
+           (double)SettingsManager::getTrainerWeight(),
            DirConManager::getZwiftGradePercent(),
            DirConManager::getSmoothedGradePercent(),
            DirConManager::getTrainerWindCoefficient(),
