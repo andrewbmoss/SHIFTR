@@ -14,6 +14,7 @@ constexpr uint32_t SCAN_SECONDS = 12;
 constexpr uint32_t LISTEN_MS = 30000;
 constexpr size_t MAX_SCAN_ENTRIES = 30;
 constexpr size_t MAX_PACKETS = 40;
+constexpr int CONNECT_ATTEMPTS = 4;
 
 const NimBLEUUID CPS_SERVICE((uint16_t)0x1818);
 const NimBLEUUID CPS_MEASUREMENT((uint16_t)0x2A63);
@@ -59,6 +60,8 @@ std::string chosenAddress;
 std::string chosenName;
 int connectionRssi = 0;
 uint32_t connectMs = 0;
+int connectAttempts = 0;
+std::string connectErrors;
 std::vector<std::string> attributeLines;  // "service/characteristic props"
 std::vector<std::pair<std::string, std::string>> deviceInfo;
 uint32_t cpFeatures = 0;
@@ -242,15 +245,35 @@ void probeTask(void*) {
     return;
   }
   client->setConnectTimeout(10);
-  uint32_t connectStart = millis();
-  if (!client->connect(target.address)) {
-    fail(String("Couldn't connect, error ") + client->getLastError() + ". Spin the cranks and try again.");
+  // error 574 (HCI 0x3E, connection failed to be established) is common right after the
+  // meter wakes up; a couple of retries usually get through
+  bool connectedOk = false;
+  std::string errors;
+  int attempt = 0;
+  for (attempt = 1; attempt <= CONNECT_ATTEMPTS; attempt++) {
+    uint32_t connectStart = millis();
+    if (client->connect(target.address)) {
+      connectMs = millis() - connectStart;
+      connectedOk = true;
+      break;
+    }
+    if (!errors.empty()) errors += " ";
+    errors += std::to_string(client->getLastError());
+    log_w("Power meter connect attempt %d failed, error %d", attempt, client->getLastError());
+    vTaskDelay(pdMS_TO_TICKS(700));
+  }
+  {
+    std::lock_guard<std::mutex> guard(lock);
+    connectAttempts = connectedOk ? attempt : CONNECT_ATTEMPTS;
+    connectErrors = errors;
+  }
+  if (!connectedOk) {
+    fail(String("Couldn't connect after ") + CONNECT_ATTEMPTS + " attempts (errors " + errors.c_str() + "). Spin the cranks and try again.");
     NimBLEDevice::deleteClient(client);
     taskHandle = nullptr;
     vTaskDelete(nullptr);
     return;
   }
-  connectMs = millis() - connectStart;
 
   // --- discover and read ---
   std::vector<NimBLERemoteService*>* services = client->getServices(true);
@@ -364,6 +387,8 @@ bool SensorProbe::start(const std::string& address, String& error) {
   scanEntries.clear();
   chosenAddress = "";
   chosenName = "";
+  connectAttempts = 0;
+  connectErrors = "";
   attributeLines.clear();
   deviceInfo.clear();
   cpFeatures = 0;
@@ -404,7 +429,7 @@ String SensorProbe::getReport() {
   json += "]";
   if (!chosenAddress.empty()) {
     json += ", \"meter\": {\"address\": \"" + String(chosenAddress.c_str()) + "\", \"name\": \"" + String(chosenName.c_str()) + "\"";
-    json += ", \"connect_ms\": " + String(connectMs) + ", \"rssi\": " + connectionRssi;
+    json += ", \"connect_ms\": " + String(connectMs) + ", \"connect_attempts\": " + connectAttempts + ", \"connect_errors\": \"" + String(connectErrors.c_str()) + "\", \"rssi\": " + connectionRssi;
     for (const auto& field : deviceInfo) {
       json += ", \"" + String(field.first.c_str()) + "\": \"" + String(field.second.c_str()) + "\"";
     }
