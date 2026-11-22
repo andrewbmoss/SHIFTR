@@ -9,8 +9,8 @@
 #define VERSION_H
 #define VERSION "v1.6.1-ftms"
 #define VERSION_MAJOR 1
-#define VERSION_MINOR 5
-#define VERSION_PATCH 0
+#define VERSION_MINOR 6
+#define VERSION_PATCH 1
 #define VERSION_BUILD "saris"
-#define VERSION_TIMESTAMP "2026-Nov-08"
+#define VERSION_TIMESTAMP "2026-Nov-22"
 #endif

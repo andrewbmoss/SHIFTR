@@ -15,7 +15,8 @@ to the trainer over Bluetooth, shows up in Zwift as a Direct Connect (Ethernet)
 trainer that speaks the Zwift protocol, and turns Zwift's gear, grade and ERG
 commands into FTMS (or FE-C) commands for the trainer.
 
-Wiring and the first flash are in [WIRING.md](WIRING.md).
+Wiring and the first flash are in [WIRING.md](WIRING.md). Release notes for each
+version are in [CHANGELOG.md](CHANGELOG.md).
 
 ## What changed compared to upstream SHIFTR
 
