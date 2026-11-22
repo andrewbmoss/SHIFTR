@@ -287,7 +287,7 @@ void meterTask(void*) {
           wasConnected = true;
           lastRssiAt = millis();
           lastBatteryAt = millis();
-          Telemetry::eventf(TelemetryEvent::POWER_METER, "connected after %lu attempt(s); battery %d%%", (unsigned long)attempts, battery);
+          Telemetry::eventf(TelemetryEvent::POWER_METER, "connected; tries %lu; battery %d%%", (unsigned long)attempts, battery);
           log_i("Power meter %s connected after %lu attempts", address.c_str(), (unsigned long)attempts);
         }
         lastAttemptAt = millis();

@@ -303,3 +303,27 @@ retries.
 - The diagnostics probe pauses the meter task and refuses to run while the meter is
   connected.
 - Power to Zwift is unchanged (still the trainer) until phase 4.
+
+## First log (2026-11-22 16:00, 13 min, `alpha.3`)
+
+- Data integrity: no missing samples, trainer and Power2Max both 1 packet/s, meter data
+  never older than 1.1 s, power aligned at lag 0 (correlation 0.98).
+- Heap: about 60 KB free with trainer, meter and Zwift connected; largest block steady at
+  31.7 KB. No sign of a leak in this short ride.
+- One 5.4 s main-loop stall, at the trainer (re)connect: v1 discovers the trainer's
+  services in the main loop. Only on reconnects; candidate for moving into a task later.
+- Event text over 39 characters is cut ("battery 1"): shortened in alpha.4.
+- Cadence: trainer and Power2Max agree, median difference 0.2 rpm.
+- Power, 10 s steady windows (n = 109, 83-501 W): trainer = 1.005 × Power2Max + 9.4 W.
+  Close to a constant offset, not a scale error, and it grows with flywheel speed:
+  −0.5 W at 20-30 km/h, +7.5 W at 30-35, +12 W at 35-40, +16 W at 40-45. That pattern
+  fits the trainer's internal loss model (spindown calibration) better than a Power2Max
+  scale error. Expected with perfect meters: trainer 2-4 % *below* the Power2Max.
+- Second-to-second spread is mostly flywheel energy: the trainer reports brake power,
+  so it reads high while the flywheel slows (ratio 1.23) and low while it speeds up
+  (1.00). About 3.8 kg equivalent at flywheel speed.
+
+Test plan for the next ride: spindown in the Saris app after a 10 min warm-up; coast 3 s
+before each block (Power2Max auto zero); ERG blocks at the same power with two
+different cadences (same power, different flywheel speed) to separate a power-dependent
+error from a speed-dependent one.
