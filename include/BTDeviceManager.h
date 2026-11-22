@@ -18,6 +18,7 @@ class BTDeviceManager {
   static bool isConnected();
   static bool isStarted();
   static std::string getConnecedDeviceName();
+  static std::string getConnectedAddress();
   static bool writeBLECharacteristic(const NimBLEUUID& serviceUUID, const NimBLEUUID& characteristicUUID, std::vector<uint8_t>* data, bool withResponse = false);
   static std::vector<uint8_t> readBLECharacteristic(const NimBLEUUID& serviceUUID, const NimBLEUUID& characteristicUUID);
   // subscribe for the whole connection (used by TrainerControl for its own data)

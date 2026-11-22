@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="dark light">
+    <link rel="shortcut icon" type="image/x-icon" href="favicon.ico">
+    <link rel="stylesheet" type="text/css" href="style.css">
+    <title>SHIFTR diagnostics</title>
+    <style>
+        pre { white-space: pre-wrap; word-break: break-all; font-size: 12px; max-height: 420px; overflow: auto; text-align: left; }
+        ol { text-align: left; }
+        .summary div { margin: 4px 0; }
+    </style>
+</head>
+
+<script type="text/javascript">
+    let zwiftReport = null;
+    let probeReport = null;
+    let polling = null;
+
+    function show(id, text) { document.getElementById(id).innerHTML = text; }
+
+    function combined() {
+        return JSON.stringify({ version: document.getElementById('version').textContent, taken: new Date().toISOString(), zwift: zwiftReport, power_meter: probeReport }, null, 2);
+    }
+
+    function render() {
+        show('report', combined().replace(/&/g, '&amp;').replace(/</g, '&lt;'));
+    }
+
+    function takeZwiftSnapshot() {
+        fetch('/probe/zwift', { cache: 'no-store' }).then(r => r.json()).then(report => {
+            zwiftReport = report;
+            let carrying = report.traffic.filter(t => t.notifications > 0).length;
+            show('zwift_summary', report.mode + ', ' + report.clients + ' Zwift connection(s), ' + report.traffic.length + ' characteristics in use, ' + carrying + ' sending data to Zwift');
+            render();
+        }).catch(e => show('zwift_summary', 'Failed: ' + e));
+    }
+
+    function summarise(report) {
+        if (report.state == 'failed') return '<b>Failed:</b> ' + report.error;
+        if (report.state != 'done') return 'Running: ' + report.state + '…';
+        let m = report.meter;
+        let powers = m.packets.map(p => p.power);
+        let cadences = m.packets.filter(p => p.cadence > 0).map(p => p.cadence);
+        let avg = a => a.length ? (a.reduce((s, v) => s + v, 0) / a.length).toFixed(0) : '-';
+        return '<div><b>' + (m.name || m.address) + '</b> ' + (m.manufacturer || '') + ' ' + (m.model || '') + '</div>' +
+            '<div>Firmware: ' + (m.firmware || m.software || 'not reported') + ', battery: ' + (m.battery >= 0 ? m.battery + ' %' : '-') + ', signal: ' + m.rssi + ' dBm</div>' +
+            '<div>Features: ' + m.cp_features + '</div>' +
+            '<div>Zero offset over Bluetooth: ' + (m.offset_compensation ? 'supported' : 'not supported') + '</div>' +
+            '<div>' + m.packets_received + ' measurements in 30 s, average ' + avg(powers) + ' W, ' + avg(cadences) + ' rpm</div>' +
+            '<div>Trainer stayed connected: ' + (report.trainer.connected_after ? 'yes' : '<b>no</b>') + ', free memory with both connected: ' + report.heap.connected.free + ' bytes</div>';
+    }
+
+    function poll() {
+        fetch('/probe/report', { cache: 'no-store' }).then(r => r.json()).then(report => {
+            probeReport = report;
+            show('probe_summary', summarise(report));
+            render();
+            if (report.state == 'done' || report.state == 'failed') {
+                clearInterval(polling);
+                polling = null;
+                document.getElementById('probe_btn').disabled = false;
+            }
+        }).catch(e => {});
+    }
+
+    function startProbe() {
+        let address = document.getElementById('address').value.trim();
+        document.getElementById('probe_btn').disabled = true;
+        show('probe_summary', 'Starting…');
+        fetch('/probe/start', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'address=' + encodeURIComponent(address) })
+            .then(r => r.json()).then(result => {
+                if (!result.started) {
+                    show('probe_summary', '<b>Not started:</b> ' + result.error);
+                    document.getElementById('probe_btn').disabled = false;
+                    return;
+                }
+                polling = setInterval(poll, 2000);
+            }).catch(e => { show('probe_summary', 'Failed: ' + e); document.getElementById('probe_btn').disabled = false; });
+    }
+
+    function copyReport() {
+        let text = combined();
+        navigator.clipboard.writeText(text).then(() => show('copy_state', 'Copied')).catch(() => {
+            let area = document.createElement('textarea');
+            area.value = text; document.body.appendChild(area); area.select();
+            document.execCommand('copy'); document.body.removeChild(area);
+            show('copy_state', 'Copied');
+        });
+    }
+
+    function setup() {
+        fetch('/status', { cache: 'no-store' }).then(r => r.json()).then(s => show('version', s.version)).catch(e => {});
+        fetch('/probe/report', { cache: 'no-store' }).then(r => r.json()).then(report => {
+            if (report.state != 'idle') { probeReport = report; show('probe_summary', summarise(report)); render(); }
+            if (report.state == 'scanning' || report.state == 'connecting' || report.state == 'listening') {
+                document.getElementById('probe_btn').disabled = true;
+                polling = setInterval(poll, 2000);
+            }
+        }).catch(e => {});
+        render();
+    }
+</script>
+
+<body onLoad="setup()">
+    <div class="container">
+        <h1>Diagnostics (v2 phase 0)</h1>
+        <div class="form">
+            <div>Firmware <span id="version"></span>. <a href="/">Back to status</a></div>
+        </div>
+    </div>
+
+    <div class="container">
+        <h1>1. Zwift snapshot</h1>
+        <div class="form">
+            <ol>
+                <li>Start a ride in Zwift with virtual shifting and pedal for a minute or two.</li>
+                <li>Click the button while still riding.</li>
+            </ol>
+            <div class="button-container">
+                <button class="btn" onclick="takeZwiftSnapshot()"><label>Take Zwift snapshot</label></button>
+            </div>
+            <div id="zwift_summary"></div>
+        </div>
+    </div>
+
+    <div class="container">
+        <h1>2. Power meter probe</h1>
+        <div class="form">
+            <ol>
+                <li>Trainer connected. Zwift can stay connected, but stop pedalling on the trainer.</li>
+                <li>Turn the cranks backwards a few times until the Power2Max's LED blinks green.</li>
+                <li>Within a minute, click the button, then pedal gently for the next 45 seconds.</li>
+            </ol>
+            <div class="form-control"><label>Address (optional):</label><input type="text" id="address" placeholder="automatic"></div>
+            <div class="button-container">
+                <button class="btn" id="probe_btn" onclick="startProbe()"><label>Probe power meter</label></button>
+            </div>
+            <div id="probe_summary" class="summary"></div>
+        </div>
+    </div>
+
+    <div class="container">
+        <h1>3. Report</h1>
+        <div class="form">
+            <div class="button-container">
+                <button class="btn" onclick="copyReport()"><label>Copy report</label></button>
+            </div>
+            <div id="copy_state"></div>
+            <pre id="report"></pre>
+        </div>
+    </div>
+</body>
+
+</html>

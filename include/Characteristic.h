@@ -22,6 +22,10 @@ class Characteristic {
   Service* getService();
   void setProperties(uint32_t properties);
   uint32_t getProperties();
+  // DirCon traffic with Zwift, for diagnostics
+  uint32_t notificationsToZwift = 0;
+  uint32_t writesFromZwift = 0;
+  uint32_t readsFromZwift = 0;
 
  private:
   uint32_t properties;

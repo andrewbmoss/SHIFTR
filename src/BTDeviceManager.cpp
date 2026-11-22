@@ -96,6 +96,13 @@ std::string BTDeviceManager::getConnecedDeviceName() {
   return connectedDeviceName;
 }
 
+std::string BTDeviceManager::getConnectedAddress() {
+  if (connected && (nimBLEClient != nullptr) && nimBLEClient->isConnected()) {
+    return nimBLEClient->getPeerAddress().toString();
+  }
+  return "";
+}
+
 bool BTDeviceManager::isStarted() {
   return started;
 }
@@ -151,7 +158,11 @@ bool BTDeviceManager::connectRemoteDevice(NimBLEAdvertisedDevice* remoteDevice) 
   pinnedCharacteristics.clear();
   log_i("Connecting to BLE device %s (%s)", remoteDevice->getAddress().toString().c_str(), remoteDevice->getName().c_str());
   stopScan();
-  nimBLEClient = nullptr;
+  if (nimBLEClient != nullptr) {
+    // v1 created a new client on every reconnect and never freed the old one (a few KB each)
+    NimBLEDevice::deleteClient(nimBLEClient);
+    nimBLEClient = nullptr;
+  }
   nimBLEClient = NimBLEDevice::createClient();
   nimBLEClient->setClientCallbacks(new BTClientCallbacks(), true);
   nimBLEClient->setConnectTimeout(BLE_CONNECT_TIMEOUT);

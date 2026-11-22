@@ -331,6 +331,7 @@ bool DirConManager::processDirConMessage(DirConMessage *dirConMessage, AsyncClie
         returnMessage.ResponseCode = DIRCON_RESPCODE_CHARACTERISTIC_NOT_FOUND;
         break;
       }
+      characteristic->writesFromZwift++;
       if (dirConMessage->AdditionalData.size() == 0) {
         returnMessage.Identifier = DIRCON_RESPCODE_CHARACTERISTIC_OPERATION_NOT_SUPPORTED;
         break;
@@ -376,6 +377,7 @@ bool DirConManager::processDirConMessage(DirConMessage *dirConMessage, AsyncClie
         returnMessage.ResponseCode = DIRCON_RESPCODE_CHARACTERISTIC_NOT_FOUND;
         break;
       }
+      characteristic->readsFromZwift++;
       if (characteristic->getService() != nullptr) {
         if (!characteristic->getService()->isInternal()) {
           returnMessage.AdditionalData = BTDeviceManager::readBLECharacteristic(characteristic->getService()->UUID, characteristic->UUID);
@@ -702,6 +704,7 @@ void DirConManager::sendDirConCharacteristicNotification(Characteristic *charact
   if (onlySubscribers && (characteristic->getSubscriptions().size() == 0)) {
     return;
   }
+  characteristic->notificationsToZwift++;
   DirConMessage dirConMessage;
   dirConMessage.Identifier = DIRCON_MSGID_UNSOLICITED_CHARACTERISTIC_NOTIFICATION;
   dirConMessage.UUID = characteristic->UUID;
@@ -999,4 +1002,40 @@ uint32_t DirConManager::getBlockedPassthroughWrites() {
 
 double DirConManager::getDefaultGearRatio() {
   return defaultGearRatio;
+}
+
+// Which characteristics Zwift uses and how much: subscriptions, notifications we sent, its writes/reads.
+// Phase 0 of v2 uses this to find every path that carries power and cadence to Zwift.
+String DirConManager::getZwiftTrafficReport() {
+  String json = "[";
+  bool first = true;
+  if (serviceManager != nullptr) {
+    for (Service *service : serviceManager->getServices()) {
+      for (Characteristic *characteristic : service->getCharacteristics()) {
+        if ((characteristic->getSubscriptions().size() == 0) && (characteristic->notificationsToZwift == 0) &&
+            (characteristic->writesFromZwift == 0) && (characteristic->readsFromZwift == 0)) {
+          continue;
+        }
+        if (!first) json += ",";
+        first = false;
+        json += "{\"service\": \"";
+        json += service->UUID.toString().c_str();
+        json += "\", \"characteristic\": \"";
+        json += characteristic->UUID.toString().c_str();
+        json += "\", \"bridge_generated\": ";
+        json += service->isInternal() ? "true" : "false";
+        json += ", \"subscriptions\": ";
+        json += characteristic->getSubscriptions().size();
+        json += ", \"notifications\": ";
+        json += characteristic->notificationsToZwift;
+        json += ", \"writes\": ";
+        json += characteristic->writesFromZwift;
+        json += ", \"reads\": ";
+        json += characteristic->readsFromZwift;
+        json += "}";
+      }
+    }
+  }
+  json += "]";
+  return json;
 }

@@ -417,6 +417,41 @@ void test_cadence_estimate_round_trip(void) {
   TEST_ASSERT_EQUAL_DOUBLE(0.0, Calculations::estimateCadenceFromSpeed(0, defaultRatio, Calculations::wheelDiameter));
 }
 
+
+void test_cps_full_measurement(void) {
+  // flags: balance (left reference), accumulated torque (crank based), crank data, offset indicator
+  // power 250 W, balance 50.5 %, torque 1000/32 Nm, crank 1234 revs at 5000/1024 s
+  uint16_t flags = 0x0001 | 0x0002 | 0x0004 | 0x0008 | 0x0020 | 0x1000;
+  uint8_t data[] = {(uint8_t)(flags & 0xFF), (uint8_t)(flags >> 8), 250, 0, 101, 0xE8, 0x03, 0xD2, 0x04, 0x88, 0x13};
+  TrainerProtocol::CyclingPowerData result;
+  TEST_ASSERT_TRUE(TrainerProtocol::parseCyclingPowerMeasurement(data, sizeof(data), result));
+  TEST_ASSERT_EQUAL_INT(250, result.powerWatts);
+  TEST_ASSERT_TRUE(result.hasBalance);
+  TEST_ASSERT_DOUBLE_WITHIN(1e-9, 50.5, result.balancePercent);
+  TEST_ASSERT_TRUE(result.balanceReferenceLeft);
+  TEST_ASSERT_TRUE(result.hasAccumulatedTorque);
+  TEST_ASSERT_EQUAL_UINT16(1000, result.accumulatedTorque);
+  TEST_ASSERT_TRUE(result.torqueFromCrank);
+  TEST_ASSERT_TRUE(result.hasCrank);
+  TEST_ASSERT_EQUAL_UINT16(1234, result.crankRevolutions);
+  TEST_ASSERT_EQUAL_UINT16(5000, result.crankEventTime);
+  TEST_ASSERT_FALSE(result.hasWheel);
+  TEST_ASSERT_TRUE(result.offsetCompensationIndicator);
+}
+
+void test_cps_truncated_keeps_power(void) {
+  uint8_t data[] = {0x20, 0x00, 0x2C, 0x01, 0x10};  // says crank data follows, but it's cut off
+  TrainerProtocol::CyclingPowerData result;
+  TEST_ASSERT_TRUE(TrainerProtocol::parseCyclingPowerMeasurement(data, sizeof(data), result));
+  TEST_ASSERT_EQUAL_INT(300, result.powerWatts);
+  TEST_ASSERT_FALSE(result.hasCrank);
+}
+
+void test_cps_feature_names(void) {
+  std::string text = TrainerProtocol::describeCyclingPowerFeatures((1u << 0) | (1u << 3) | (1u << 9));
+  TEST_ASSERT_EQUAL_STRING("pedal_balance, crank_revolutions, offset_compensation", text.c_str());
+}
+
 int main(int argc, char** argv) {
   Logger::defaultLogLevel = LOG_LEVEL_ERROR;
   UNITY_BEGIN();
@@ -446,6 +481,9 @@ int main(int argc, char** argv) {
   RUN_TEST(test_downhill_harder_gear_needs_less);
   RUN_TEST(test_trainer_weight_conversion);
   RUN_TEST(test_wind_coefficient_units);
+  RUN_TEST(test_cps_full_measurement);
+  RUN_TEST(test_cps_truncated_keeps_power);
+  RUN_TEST(test_cps_feature_names);
   RUN_TEST(test_axs_table_is_full_2x12_sorted);
   RUN_TEST(test_axs_mapper_follows_zwift_gear);
   RUN_TEST(test_trainer_simulation_matches_real_bike);

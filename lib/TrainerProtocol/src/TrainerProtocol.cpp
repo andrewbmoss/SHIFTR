@@ -165,16 +165,27 @@ bool parseCyclingPowerMeasurement(const uint8_t* data, size_t length, CyclingPow
     return false;
   }
   uint16_t flags = readUInt16(data);
+  result.flags = flags;
   result.powerWatts = readSInt16(data + 2);
+  result.balanceReferenceLeft = (flags & 0x0002) != 0;
+  result.torqueFromCrank = (flags & 0x0008) != 0;
+  result.offsetCompensationIndicator = (flags & 0x1000) != 0;
   size_t offset = 4;
-  if (flags & 0x0001) {  // pedal power balance
+  // fields follow in flag order; a truncated packet still has a valid power value
+  if (flags & 0x0001) {  // pedal power balance, 1/2 %
+    if (offset + 1 > length) return true;
+    result.balancePercent = data[offset] / 2.0;
+    result.hasBalance = (data[offset] != 0xFF);
     offset += 1;
   }
-  if (flags & 0x0004) {  // accumulated torque
+  if (flags & 0x0004) {  // accumulated torque, 1/32 Nm
+    if (offset + 2 > length) return true;
+    result.accumulatedTorque = readUInt16(data + offset);
+    result.hasAccumulatedTorque = true;
     offset += 2;
   }
   if (flags & 0x0010) {  // wheel revolution data
-    if (offset + 6 > length) return true;  // power is still valid
+    if (offset + 6 > length) return true;
     result.wheelRevolutions = (uint32_t)data[offset] | ((uint32_t)data[offset + 1] << 8) | ((uint32_t)data[offset + 2] << 16) | ((uint32_t)data[offset + 3] << 24);
     result.wheelEventTime = readUInt16(data + offset + 4);
     result.hasWheel = true;
@@ -187,7 +198,44 @@ bool parseCyclingPowerMeasurement(const uint8_t* data, size_t length, CyclingPow
     result.hasCrank = true;
     offset += 4;
   }
+  if (flags & 0x0040) offset += 4;  // extreme force magnitudes
+  if (flags & 0x0080) offset += 4;  // extreme torque magnitudes
+  if (flags & 0x0100) offset += 3;  // extreme angles
+  if (flags & 0x0200) offset += 2;  // top dead spot angle
+  if (flags & 0x0400) offset += 2;  // bottom dead spot angle
+  if (flags & 0x0800) {             // accumulated energy, kJ
+    if (offset + 2 > length) return true;
+    result.accumulatedEnergyKJ = readUInt16(data + offset);
+    result.hasAccumulatedEnergy = true;
+    offset += 2;
+  }
   return true;
+}
+
+std::string describeCyclingPowerFeatures(uint32_t features) {
+  struct Bit {
+    uint8_t bit;
+    const char* name;
+  };
+  static const Bit bits[] = {{0, "pedal_balance"}, {1, "accumulated_torque"}, {2, "wheel_revolutions"}, {3, "crank_revolutions"},
+                             {4, "extreme_magnitudes"}, {5, "extreme_angles"}, {6, "dead_spot_angles"}, {7, "accumulated_energy"},
+                             {8, "offset_compensation_indicator"}, {9, "offset_compensation"}, {10, "content_masking"},
+                             {11, "multiple_sensor_locations"}, {12, "crank_length_adjustment"}, {13, "chain_length_adjustment"},
+                             {14, "chain_weight_adjustment"}, {15, "span_length_adjustment"}, {16, "torque_based"},
+                             {19, "factory_calibration_date"}, {20, "enhanced_offset_compensation"}};
+  std::string text;
+  for (const Bit& entry : bits) {
+    if (features & (1u << entry.bit)) {
+      if (!text.empty()) text += ", ";
+      text += entry.name;
+    }
+  }
+  uint32_t direction = (features >> 17) & 0x3;
+  if (direction != 0) {
+    if (!text.empty()) text += ", ";
+    text += "instantaneous_direction_" + std::to_string(direction);
+  }
+  return text;
 }
 
 double CrankCadence::update(uint16_t revolutions, uint16_t eventTime1024, uint32_t nowMs) {

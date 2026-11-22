@@ -94,15 +94,31 @@ bool parseResistanceLevelRange(const uint8_t* data, size_t length, ResistanceLev
 // Cycling Power Service (0x1818), Cycling Power Measurement (0x2A63)
 // ---------------------------------------------------------------------------
 struct CyclingPowerData {
+  uint16_t flags = 0;
   int16_t powerWatts = 0;
+  bool hasBalance = false;
+  double balancePercent = 0;       // share of power from the reference pedal, %
+  bool balanceReferenceLeft = false;
+  bool hasAccumulatedTorque = false;
+  uint16_t accumulatedTorque = 0;  // 1/32 Nm, wraps
+  bool torqueFromCrank = false;    // false = wheel based
   bool hasCrank = false;
   uint16_t crankRevolutions = 0;   // cumulative, wraps at 65536
   uint16_t crankEventTime = 0;     // 1/1024 s, wraps
   bool hasWheel = false;
   uint32_t wheelRevolutions = 0;   // cumulative
   uint16_t wheelEventTime = 0;     // 1/2048 s, wraps
+  bool hasAccumulatedEnergy = false;
+  uint16_t accumulatedEnergyKJ = 0;
+  bool offsetCompensationIndicator = false;
 };
 bool parseCyclingPowerMeasurement(const uint8_t* data, size_t length, CyclingPowerData& result);
+// Cycling Power Feature (0x2A65) bits as readable names, e.g. "pedal_balance, crank_revolutions"
+std::string describeCyclingPowerFeatures(uint32_t features);
+constexpr uint32_t CP_FEATURE_OFFSET_COMPENSATION = 1u << 9;
+// Cycling Power Control Point (0x2A66)
+constexpr uint8_t CP_OP_START_OFFSET_COMPENSATION = 0x0C;
+constexpr uint8_t CP_OP_RESPONSE = 0x20;
 
 // Turns cumulative crank revolutions + event times into RPM.
 // Holds the last value between events and drops to 0 when no new revolution arrives for a while.

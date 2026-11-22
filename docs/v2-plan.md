@@ -177,12 +177,28 @@ install resets settings once; v2 will show the old values to re-enter.
 | Power2Max BLE behaviour differs from the standard (e.g. no offset compensation over BLE) | Feature bits are read, not assumed; buttons hidden when unsupported. |
 | Browser throttling or a closed tab loses data | Sequence numbers and a 10-minute buffer; the page reports gaps; logger state on the status page. |
 
-## Open questions
+## Decisions (2026-11-22)
 
-- Browser on the Zwift PC (Chrome/Edge needed for writing directly to a file).
-- Sample rate: 1 Hz default, or 2/4 Hz for faster trainer dynamics (more RAM, larger
-  files).
-- Is there a head unit that can record the Power2Max over ANT+ during test rides
-  (independent cross-check)?
-- Power2Max firmware version (shown in the power2max app), in case BLE behaviour depends
-  on it.
+- Zwift PC has Chrome and Edge: the logger writes straight to a file.
+- 1 Hz sampling; faster rates later only if diagnostics need them.
+- A head unit is available to record the Power2Max over ANT+ during test rides.
+- The power2max app login fails, so the bridge reads the meter's firmware version itself
+  over Bluetooth (Device Information Service) in the phase 0 probe.
+
+## Phase 0 diagnostic build (`v2.0.0-alpha.0-ftms`)
+
+- `/probe` page (linked as *Diagnostics* at the bottom of the status page):
+  - *Take Zwift snapshot*: every characteristic Zwift uses, with subscriptions,
+    notifications sent to Zwift, writes and reads, plus mode and heap.
+  - *Probe power meter*: 12 s scan, picks the Power2Max (name, else strongest Cycling
+    Power device that isn't the trainer), connects as a second connection, reads device
+    information, CP features, sensor location and battery, lists all attributes, records
+    30 s of measurements (raw and decoded: power, balance, torque, crank data, cadence),
+    disconnects. Reports heap before/connected/after and whether the trainer stayed
+    connected.
+  - *Copy report*: both results as one JSON to paste back.
+- Full Cycling Power Measurement parser (balance, torque, offset indicator, energy) and
+  CP feature names in `lib/TrainerProtocol`, with tests.
+- Fix: the trainer reconnect created a new Bluetooth client every time without freeing
+  the old one.
+- Footer credits Jürgen Leber and links this fork for bug reports.

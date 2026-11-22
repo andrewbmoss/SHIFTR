@@ -16,6 +16,8 @@
 #include <WiFi.h>
 #include <ArduinoOTA.h>
 #include <TrainerControl.h>
+#include <SensorProbe.h>
+#include <esp_heap_caps.h>
 
 #define STR_HELPER(x) #x
 #define STR(x) STR_HELPER(x)
@@ -27,6 +29,7 @@ void handleWebServerSettings();
 void handleWebServerSettingsPost();
 void handleWebServerDebug();
 void handleWebServerLive();
+void handleWebServerZwiftSnapshot();
 void handleFunctionButton();
 void startArduinoOTA();
 
@@ -100,6 +103,18 @@ void setup() {
   webServer.on("/favicon.ico", [] { handleWebServerFile("favicon.ico"); });
   webServer.on("/style.css", [] { handleWebServerFile("style.css"); });
   webServer.on("/", [] { handleWebServerFile("index.html"); });
+  webServer.on("/probe", HTTP_GET, [] { handleWebServerFile("probe.html"); });
+  webServer.on("/probe/report", HTTP_GET, [] { webServer.send(200, "application/json", SensorProbe::getReport()); });
+  webServer.on("/probe/zwift", HTTP_GET, handleWebServerZwiftSnapshot);
+  webServer.on("/probe/start", HTTP_POST, [] {
+    if (!webServer.authenticate(SettingsManager::getUsername().c_str(), SettingsManager::getAPPassword().c_str())) {
+      return webServer.requestAuthentication();
+    }
+    String error;
+    bool started = SensorProbe::start(std::string(webServer.arg("address").c_str()), error);
+    error.replace("\"", "'");
+    webServer.send(200, "application/json", String("{\"started\": ") + (started ? "true" : "false") + ", \"error\": \"" + error + "\"}");
+  });
   webServer.on("/settings", HTTP_GET, [] { 
     if (!webServer.authenticate(SettingsManager::getUsername().c_str(), SettingsManager::getAPPassword().c_str())) {
       return webServer.requestAuthentication();
@@ -276,6 +291,9 @@ extern const uint8_t index_html_end[] asm("_binary_src_web_index_html_end");
 extern const uint8_t settings_html_start[] asm("_binary_src_web_settings_html_start");
 extern const uint8_t settings_html_end[] asm("_binary_src_web_settings_html_end");
 
+extern const uint8_t probe_html_start[] asm("_binary_src_web_probe_html_start");
+extern const uint8_t probe_html_end[] asm("_binary_src_web_probe_html_end");
+
 extern const uint8_t style_css_start[] asm("_binary_src_web_style_css_start");
 extern const uint8_t style_css_end[] asm("_binary_src_web_style_css_end");
 
@@ -289,6 +307,9 @@ void handleWebServerFile(const String& fileName) {
   }
   if (fileName.equals("settings.html")) {
     webServer.send_P(200, "text/html", (char*)settings_html_start, (settings_html_end - settings_html_start));
+  }
+  if (fileName.equals("probe.html")) {
+    webServer.send_P(200, "text/html", (char*)probe_html_start, (probe_html_end - probe_html_start));
   }
   if (fileName.equals("style.css")) {
     webServer.send_P(200, "text/css", (char*)style_css_start, (style_css_end - style_css_start));
@@ -606,6 +627,43 @@ void handleWebServerDebug() {
 
   webServer.send(200, "application/json", json);
 }
+// Phase 0: what Zwift subscribes to and which characteristics carry data to it
+void handleWebServerZwiftSnapshot() {
+  const char* zwiftMode = "SIM";
+  switch (DirConManager::getZwiftTrainerMode()) {
+    case TrainerMode::SIM_MODE_VIRTUAL_SHIFTING:
+      zwiftMode = "SIM + virtual shifting";
+      break;
+    case TrainerMode::ERG_MODE:
+      zwiftMode = "ERG";
+      break;
+    default:
+      break;
+  }
+  String json = "{\"mode\": \"";
+  json += zwiftMode;
+  json += "\", \"clients\": ";
+  json += DirConManager::getConnectedClientCount();
+  json += ", \"uptime_s\": ";
+  json += millis() / 1000;
+  json += ", \"trainer\": \"";
+  json += BTDeviceManager::getConnecedDeviceName().c_str();
+  json += "\", \"trainer_protocol\": \"";
+  json += TrainerControl::getProtocolName();
+  json += "\", \"trainer_packets\": \"";
+  json += TrainerControl::getPacketSummary();
+  json += "\", \"heap\": {\"free\": ";
+  json += ESP.getFreeHeap();
+  json += ", \"min_free\": ";
+  json += ESP.getMinFreeHeap();
+  json += ", \"largest_block\": ";
+  json += heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+  json += "}, \"traffic\": ";
+  json += DirConManager::getZwiftTrafficReport();
+  json += "}";
+  webServer.send(200, "application/json", json);
+}
+
 // Live ride data for the status page, polled once per second
 void handleWebServerLive() {
   char buffer[1024];
