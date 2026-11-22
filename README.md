@@ -1,11 +1,19 @@
 # SHIFTR for Saris (FTMS fork)
 
-This fork of [JuergenLeber/SHIFTR](https://github.com/JuergenLeber/SHIFTR) adds a
-Bluetooth **FTMS** trainer backend, so trainers like the Saris H1/H2/H3 get Zwift
-virtual shifting through a WT32-ETH01 bridge. The bridge connects to the trainer
-over Bluetooth, shows up in Zwift as a Direct Connect (Ethernet) trainer that speaks
-the Zwift protocol, and turns Zwift's gear, grade and ERG commands into FTMS (or
-FE-C) commands for the trainer.
+> **Credit:** SHIFTR was created by **Jürgen Leber**
+> ([@JuergenLeber](https://github.com/JuergenLeber)). The original project is
+> [JuergenLeber/SHIFTR](https://github.com/JuergenLeber/SHIFTR): the Direct Connect
+> bridge, the Zwift protocol and virtual-shifting groundwork, the web interface and the
+> FE-C backend are all his. This fork builds on that work, keeps its full commit history
+> and the GPL-3.0 license, and lists its own changes below. It is not affiliated with
+> Saris, Zwift or the upstream project. If you use a trainer that upstream already
+> supports, use the original.
+
+This fork adds a Bluetooth **FTMS** trainer backend, so trainers like the Saris
+H1/H2/H3 get Zwift virtual shifting through a WT32-ETH01 bridge. The bridge connects
+to the trainer over Bluetooth, shows up in Zwift as a Direct Connect (Ethernet)
+trainer that speaks the Zwift protocol, and turns Zwift's gear, grade and ERG
+commands into FTMS (or FE-C) commands for the trainer.
 
 Wiring and the first flash are in [WIRING.md](WIRING.md).
 
@@ -193,9 +201,21 @@ Over Ethernet, without the CP2102:
 `pio test -e native` runs the PC unit tests for the FTMS/FE-C encoders and the
 virtual-shifting physics (`test/test_protocol`).
 
+## Credits and license
+
+- **Jürgen Leber**, author of [SHIFTR](https://github.com/JuergenLeber/SHIFTR), on
+  which everything here is based. His original README follows below, unchanged.
+- The third-party libraries and projects listed in [NOTICE.txt](NOTICE.txt).
+- Licensed under the [GNU GPL v3](LICENSE), same as upstream. The changes in this fork
+  are described in "What changed compared to upstream SHIFTR" above and in the commit
+  history.
+
 ---
 
 # Upstream README
+
+*The original SHIFTR README by Jürgen Leber, kept as is. Its CI badge and instructions
+refer to the upstream repository.*
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![CI](https://github.com/JuergenLeber/SHIFTR/actions/workflows/build.yml/badge.svg)](https://github.com/JuergenLeber/SHIFTR/actions/workflows/build.yml)

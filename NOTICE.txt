@@ -1,5 +1,12 @@
 SHIFTR
 Copyright 2024 SHIFTR contributors
+Original project by Jürgen Leber: https://github.com/JuergenLeber/SHIFTR
+
+SHIFTR for Saris (FTMS fork)
+Modified in 2026 by the SHIFTR Saris fork contributors: FTMS trainer backend,
+virtual shifting physics, web status page, case and wiring documentation. See README.md
+("What changed compared to upstream SHIFTR") and the commit history for details.
+Distributed under the same GNU General Public License v3.0 as the original.
 
 This product includes software from the IotWebConf project (MIT License)
 https://github.com/prampec/IotWebConf
