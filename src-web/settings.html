@@ -93,10 +93,70 @@
                     trainerProtocol.add(element);
                 }
                 settingsContainer.style = '';
+                document.getElementById('pm_container').style = '';
                 save.disabled = true;
+                loadPowerMeter();
             })
 
     }
+
+    // ---------- power meter pairing (stored separately, no reboot needed) ----------
+    let pmPolling = null;
+    function pmPost(path, body) {
+        return fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: body || '' }).then(r => r.json());
+    }
+    function escapeHtml(text) { return String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;'); }
+    function renderPowerMeter(pm) {
+        let current = pm.address ? (escapeHtml(pm.name || 'unnamed') + ' <small>(' + pm.address + ')</small> &middot; ' + pm.state) : 'none';
+        document.getElementById('pm_current').innerHTML = current;
+        document.getElementById('pm_forget_btn').style.display = pm.address ? '' : 'none';
+        let list = '';
+        if (pm.scan_running) {
+            list = 'Searching… (10 s)';
+        } else if (pm.scan_error) {
+            list = escapeHtml(pm.scan_error);
+        } else if (pm.found.length > 0) {
+            for (let f of pm.found) {
+                list += '<div class="form-control"><label>' + escapeHtml(f.name || f.address) + '</label><span>' + f.rssi + ' dBm &nbsp;'
+                    + '<button type="button" class="btn" onclick="pairPowerMeter(\'' + f.address + '\', ' + f.type + ', \'' + escapeHtml(f.name).replace(/'/g, '') + '\')"><label>Use</label></button></span></div>';
+            }
+        }
+        document.getElementById('pm_found').innerHTML = list;
+        if (!pm.scan_running && pmPolling) {
+            clearInterval(pmPolling);
+            pmPolling = null;
+            document.getElementById('pm_find_btn').disabled = false;
+        }
+    }
+    function loadPowerMeter() {
+        fetch('/powermeter', { cache: 'no-store' }).then(r => r.json()).then(renderPowerMeter).catch(() => {});
+    }
+    function findPowerMeters() {
+        document.getElementById('pm_find_btn').disabled = true;
+        pmPost('/powermeter/scan').then(result => {
+            if (!result.started) {
+                document.getElementById('pm_found').innerHTML = escapeHtml(result.error);
+                document.getElementById('pm_find_btn').disabled = false;
+                return;
+            }
+            document.getElementById('pm_found').innerHTML = 'Searching… (10 s)';
+            pmPolling = setInterval(loadPowerMeter, 1500);
+        });
+    }
+    function pairPowerMeter(address, type, name) {
+        pmPost('/powermeter/pair', 'address=' + encodeURIComponent(address) + '&type=' + type + '&name=' + encodeURIComponent(name)).then(() => {
+            document.getElementById('pm_found').innerHTML = '';
+            loadPowerMeter();
+        });
+    }
+    function pairManual() {
+        let address = document.getElementById('pm_address').value.trim();
+        if (address) pairPowerMeter(address, 1, '');
+    }
+    function forgetPowerMeter() {
+        pmPost('/powermeter/forget').then(loadPowerMeter);
+    }
+
     function enableSave() {
         let virtualShifting = document.getElementById('virtual_shifting');
         let ftmsEmulation = document.getElementById('ftms_emulation');
@@ -199,6 +259,23 @@
                     </div>
                 </form>
             </div>
+        </div>
+    </div>
+
+    <div class="container" id="pm_container" style="display: none">
+        <h1>Power meter</h1>
+        <div class="form">
+            <div class="form-control"><label>Paired:</label><span id="pm_current">…</span></div>
+            <p style="font-size: 13px; opacity: 0.8; text-align: left">Saved straight away, no reboot. The bridge connects
+                whenever the meter is awake and the trainer is connected. To pair: trainer connected, turn the cranks
+                backwards until the meter's LED blinks, then click <i>Find power meters</i> within a minute.</p>
+            <div class="button-container">
+                <button type="button" class="btn" id="pm_find_btn" onclick="findPowerMeters()"><label>Find power meters</label></button>
+                <button type="button" class="btn" id="pm_forget_btn" onclick="forgetPowerMeter()" style="display: none"><label>Forget</label></button>
+            </div>
+            <div id="pm_found"></div>
+            <div class="form-control"><label for="pm_address">Or address:</label><input type="text" id="pm_address" placeholder="cb:57:07:63:7e:6c">&nbsp;
+                <button type="button" class="btn" onclick="pairManual()"><label>Use</label></button></div>
         </div>
     </div>
 

@@ -281,3 +281,25 @@ retries.
   `row` is `sample` or `event`, so a filter in Excel separates them.
 - The File System Access API (writing straight to a file) needs https, which the bridge
   doesn't have, so the page doesn't use it.
+
+## Phase 2: Power2Max link (`v2.0.0-alpha.3-ftms`)
+
+- `src/PowerMeter.cpp`: one FreeRTOS task (core 0) does all radio work for the meter.
+  - Connects directly to the stored address (3 s attempt, 3 s pause), no scanning, and
+    only while the trainer is connected. NimBLE can't scan and initiate at the same time,
+    so the trainer's reconnect scans keep priority.
+  - Relaxed connection interval (80–120 ms) for the 1 Hz meter.
+  - Subscribes to Cycling Power Measurement with a confirmed CCCD write; reads battery
+    on connect and every 10 min; RSSI every 5 s.
+  - Power, crank-event cadence (drops to 0 after 3 s without a revolution) and left-leg
+    balance (converted from the meter's reference pedal).
+- Pairing in *Settings > Power meter*: *Find power meters* (10 s scan for Cycling Power
+  devices other than the trainer), *Use*, *Forget*, or enter the address. Stored in NVS
+  (`shiftr-v2` namespace), applied without a reboot; existing settings are untouched.
+- Status page: *Power meter* row (power, cadence, L/R balance, battery, signal) and
+  *Trainer ÷ meter*, the 30 s ratio while both read over 50 W.
+- Logger: `pm_*` columns filled; events for paired/forgotten, searching, connected (with
+  attempts and battery), disconnected.
+- The diagnostics probe pauses the meter task and refuses to run while the meter is
+  connected.
+- Power to Zwift is unchanged (still the trainer) until phase 4.

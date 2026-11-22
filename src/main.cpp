@@ -18,6 +18,7 @@
 #include <TrainerControl.h>
 #include <SensorProbe.h>
 #include <Telemetry.h>
+#include <PowerMeter.h>
 #include <esp_heap_caps.h>
 
 #define STR_HELPER(x) #x
@@ -68,6 +69,7 @@ void setup() {
     ESP.restart();
   }
   log_i("Bluetooth device manager initialized");
+  PowerMeter::begin();
 
   // function button (short press: reconnect trainer, long press: reboot)
   pinMode(FUNCTION_BUTTON_PIN, INPUT_PULLUP);
@@ -112,6 +114,22 @@ void setup() {
   webServer.on("/log", HTTP_GET, [] { Telemetry::handleLog(webServer); });
   webServer.on("/log/info", HTTP_GET, [] { Telemetry::handleInfo(webServer); });
   webServer.on("/log/marker", HTTP_POST, [] { Telemetry::handleMarker(webServer); });
+  webServer.on("/powermeter", HTTP_GET, [] { PowerMeter::handleStatus(webServer); });
+  webServer.on("/powermeter/scan", HTTP_POST, [] {
+    if (!webServer.authenticate(SettingsManager::getUsername().c_str(), SettingsManager::getAPPassword().c_str())) {
+      return webServer.requestAuthentication();
+    }
+    PowerMeter::handleScan(webServer); });
+  webServer.on("/powermeter/pair", HTTP_POST, [] {
+    if (!webServer.authenticate(SettingsManager::getUsername().c_str(), SettingsManager::getAPPassword().c_str())) {
+      return webServer.requestAuthentication();
+    }
+    PowerMeter::handlePair(webServer); });
+  webServer.on("/powermeter/forget", HTTP_POST, [] {
+    if (!webServer.authenticate(SettingsManager::getUsername().c_str(), SettingsManager::getAPPassword().c_str())) {
+      return webServer.requestAuthentication();
+    }
+    PowerMeter::handleForget(webServer); });
   webServer.on("/probe/report", HTTP_GET, [] { webServer.send(200, "application/json", SensorProbe::getReport()); });
   webServer.on("/probe/zwift", HTTP_GET, handleWebServerZwiftSnapshot);
   webServer.on("/probe/start", HTTP_POST, [] {
@@ -682,7 +700,8 @@ void handleWebServerZwiftSnapshot() {
 
 // Live ride data for the status page, polled once per second
 void handleWebServerLive() {
-  char buffer[1024];
+  char buffer[1280];
+  PowerMeterReading meter = PowerMeter::getReading();
   const char* zwiftMode = "SIM";
   switch (DirConManager::getZwiftTrainerMode()) {
     case TrainerMode::SIM_MODE_VIRTUAL_SHIFTING:
@@ -704,7 +723,8 @@ void handleWebServerLive() {
            "{\"trainer_connected\": %s, \"trainer_name\": \"%s\", \"protocol\": \"%s\", \"control\": %s, "
            "\"power\": %u, \"cadence\": %u, \"cadence_source\": \"%s\", \"speed_kph\": %.1f, \"data_age_ms\": %ld, "
            "\"zwift_clients\": %u, \"zwift_mode\": \"%s\", \"virtual_gear\": \"%s\", \"gear_ratio\": %.2f, \"model_power\": %.0f, \"drag_power\": %.0f, \"total_weight\": %.1f, \"trainer_weight\": %.1f, "
-           "\"zwift_grade\": %.2f, \"smoothed_grade\": %.2f, \"trainer_cw\": %.2f, \"residual_drag\": %.1f, \"trainer_command\": \"%s\", \"blocked_writes\": %lu, \"packets\": \"%s\", \"logger_age_ms\": %ld}",
+           "\"zwift_grade\": %.2f, \"smoothed_grade\": %.2f, \"trainer_cw\": %.2f, \"residual_drag\": %.1f, \"trainer_command\": \"%s\", \"blocked_writes\": %lu, \"packets\": \"%s\", \"logger_age_ms\": %ld, "
+           "\"pm_state\": \"%s\", \"pm_name\": \"%s\", \"pm_power\": %d, \"pm_cadence\": %.0f, \"pm_balance\": %.1f, \"pm_battery\": %d, \"pm_rssi\": %d, \"pm_age_ms\": %ld}",
            BTDeviceManager::isConnected() ? "true" : "false",
            BTDeviceManager::getConnecedDeviceName().c_str(),
            TrainerControl::getProtocolName(),
@@ -729,7 +749,9 @@ void handleWebServerLive() {
            TrainerControl::getLastCommandDescription().c_str(),
            (unsigned long)DirConManager::getBlockedPassthroughWrites(),
            TrainerControl::getPacketSummary().c_str(),
-           Telemetry::getMillisSinceLastFetch() == UINT32_MAX ? -1L : (long)Telemetry::getMillisSinceLastFetch());
+           Telemetry::getMillisSinceLastFetch() == UINT32_MAX ? -1L : (long)Telemetry::getMillisSinceLastFetch(),
+           PowerMeter::getStateName(), PowerMeter::getName().c_str(), meter.power, meter.cadence, meter.hasBalance ? meter.balanceLeft : -1.0,
+           meter.battery, meter.rssi, meter.ageMs == UINT32_MAX ? -1L : (long)meter.ageMs);
   webServer.send(200, "application/json", buffer);
 }
 

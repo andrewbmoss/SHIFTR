@@ -1,6 +1,7 @@
 #include <Telemetry.h>
 #include <BTDeviceManager.h>
 #include <DirConManager.h>
+#include <PowerMeter.h>
 #include <TrainerControl.h>
 #include <Version.h>
 #include <esp_heap_caps.h>
@@ -87,6 +88,7 @@ uint32_t bootId = 0;
 uint32_t lastSampleAt = 0;
 uint32_t lastFetchAt = 0;
 uint32_t lastPackets[3] = {0, 0, 0};
+uint32_t lastPowerMeterPackets = 0;
 uint8_t lastMode = 0xFF;
 portMUX_TYPE eventLock = portMUX_INITIALIZER_UNLOCKED;
 // events that arrive before begin() (or if allocation failed) are dropped
@@ -139,8 +141,16 @@ void takeSample(uint32_t now) {
     lastPackets[index] = packets[index];
   }
 
-  // power meter columns stay empty until phase 2
-  sample.powerMeterBalance2 = 0xFF;
+  PowerMeterReading meter = PowerMeter::getReading();
+  sample.powerMeterConnected = meter.connected ? 1 : 0;
+  sample.powerMeterPower = meter.power;
+  sample.powerMeterCadence10 = clampTo<uint16_t>(meter.cadence * 10.0);
+  sample.powerMeterBalance2 = (meter.connected && meter.hasBalance) ? clampTo<uint8_t>(meter.balanceLeft * 2.0) : 0xFF;
+  sample.powerMeterRssi = clampTo<int8_t>(meter.connected ? meter.rssi : 0);
+  sample.powerMeterAgeMs = meter.ageMs > 65535 ? 65535 : meter.ageMs;
+  uint32_t meterDelta = meter.packets - lastPowerMeterPackets;
+  sample.packetsPm = meterDelta > 255 ? 255 : meterDelta;
+  lastPowerMeterPackets = meter.packets;
 
   // what Zwift receives: the trainer's values in v1 behaviour
   sample.outputPower = sample.trainerPower;

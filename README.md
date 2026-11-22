@@ -66,6 +66,14 @@ knows once a second and keeps it in the browser until you click *Download CSV*.
 
 Columns: see `docs/v2-plan.md`, "Phase 1".
 
+### Power meter (v2)
+
+*Settings > Power meter* pairs a Bluetooth power meter (tested with a Power2Max NG):
+trainer connected, turn the cranks until the meter's LED blinks, *Find power meters*,
+*Use*. The bridge then connects to it whenever it's awake, next to the trainer, and shows
+its power, cadence and balance on the status page and in the log. Zwift still gets the
+trainer's power for now.
+
 ## Virtual shifting feel (v1.5, v1.6)
 
 The goal is that every gear and every grade feels like a real bike: pedal torque at a

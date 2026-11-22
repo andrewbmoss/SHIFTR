@@ -1,6 +1,7 @@
 #include <NimBLEDevice.h>
 #include <SensorProbe.h>
 #include <BTDeviceManager.h>
+#include <PowerMeter.h>
 #include <TrainerControl.h>
 #include <TrainerProtocol.h>
 #include <Telemetry.h>
@@ -177,7 +178,16 @@ std::string properties(NimBLERemoteCharacteristic* characteristic) {
   return text;
 }
 
+void finish() {
+  PowerMeter::setPaused(false);
+  taskHandle = nullptr;
+  vTaskDelete(nullptr);
+}
+
 void probeTask(void*) {
+  // let a running power meter connect attempt finish, then keep the radio to ourselves
+  uint32_t waitStart = millis();
+  while (PowerMeter::isRadioBusy() && (millis() - waitStart < 6000)) vTaskDelay(pdMS_TO_TICKS(100));
   heapBefore = snapshotHeap();
   trainerBefore = TrainerControl::getPacketSummary();
   trainerConnectedBefore = BTDeviceManager::isConnected();
@@ -186,8 +196,7 @@ void probeTask(void*) {
   NimBLEScan* scan = NimBLEDevice::getScan();
   if (scan->isScanning()) {
     fail("Bluetooth is busy looking for the trainer. Wait until the trainer is connected, then try again.");
-    taskHandle = nullptr;
-    vTaskDelete(nullptr);
+    finish();
     return;
   }
   setState(State::SCANNING);
@@ -227,8 +236,7 @@ void probeTask(void*) {
   if (!found) {
     fail(requestedAddress.empty() ? "No power meter found. Spin the cranks to wake the Power2Max (green LED), then start the probe within a minute."
                                   : "That address wasn't seen in the scan. Spin the cranks and try again.");
-    taskHandle = nullptr;
-    vTaskDelete(nullptr);
+    finish();
     return;
   }
 
@@ -242,8 +250,7 @@ void probeTask(void*) {
   NimBLEClient* client = NimBLEDevice::createClient();
   if (client == nullptr) {
     fail("No free Bluetooth connection slot (NimBLE limit reached)");
-    taskHandle = nullptr;
-    vTaskDelete(nullptr);
+    finish();
     return;
   }
   client->setConnectTimeout(10);
@@ -272,8 +279,7 @@ void probeTask(void*) {
   if (!connectedOk) {
     fail(String("Couldn't connect after ") + CONNECT_ATTEMPTS + " attempts (errors " + errors.c_str() + "). Spin the cranks and try again.");
     NimBLEDevice::deleteClient(client);
-    taskHandle = nullptr;
-    vTaskDelete(nullptr);
+    finish();
     return;
   }
 
@@ -337,8 +343,8 @@ void probeTask(void*) {
 
   // --- disconnect ---
   if (client->isConnected()) client->disconnect();
-  uint32_t waitStart = millis();
-  while (client->isConnected() && (millis() - waitStart < 3000)) vTaskDelay(pdMS_TO_TICKS(50));
+  uint32_t disconnectStart = millis();
+  while (client->isConnected() && (millis() - disconnectStart < 3000)) vTaskDelay(pdMS_TO_TICKS(50));
   NimBLEDevice::deleteClient(client);
   vTaskDelay(pdMS_TO_TICKS(500));
   heapAfter = snapshotHeap();
@@ -351,8 +357,7 @@ void probeTask(void*) {
     fail("Connected, but couldn't subscribe to power measurements (no Cycling Power Measurement with a notification descriptor)");
   }
   log_i("Probe finished");
-  taskHandle = nullptr;
-  vTaskDelete(nullptr);
+  finish();
 }
 
 const char* stateName(State value) {
@@ -383,6 +388,11 @@ bool SensorProbe::start(const std::string& address, String& error) {
     error = "Connect the trainer first, so the probe also shows the effect of a second connection";
     return false;
   }
+  if (PowerMeter::isConnected()) {
+    error = "The paired power meter is already connected (see the status page). Forget it in Settings to probe it again";
+    return false;
+  }
+  PowerMeter::setPaused(true);
   state = State::SCANNING;
   failure = "";
   requestedAddress = address;
@@ -404,6 +414,7 @@ bool SensorProbe::start(const std::string& address, String& error) {
   packetCount = 0;
   crankCadence.reset();
   if (xTaskCreatePinnedToCore(probeTask, "probe", 8192, nullptr, 1, &taskHandle, 1) != pdPASS) {
+    PowerMeter::setPaused(false);
     taskHandle = nullptr;
     state = State::FAILED;
     error = "Couldn't start the probe task";

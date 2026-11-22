@@ -124,6 +124,37 @@
         setText('live_suggestion', 'Set <b>Trainer weight</b> to <b>' + suggested + ' kg</b> in Settings <small>(trainer is ' + (share > 1 ? 'harder' : 'easier') + ' than the simulated bike on this climb)</small>');
     }
 
+
+    // trainer vs power meter, averaged over the last 30 s of pedalling above 50 W on both
+    let pmWindow = [];
+    function updatePowerMeter(live) {
+        let text;
+        if (live.pm_state == 'connected') {
+            text = live.pm_power + ' W &middot; ' + live.pm_cadence + ' rpm'
+                + (live.pm_balance >= 0 ? ' &middot; L ' + Math.round(live.pm_balance) + ' / R ' + (100 - Math.round(live.pm_balance)) : '')
+                + ' <small>(' + live.pm_name + (live.pm_battery >= 0 ? ', battery ' + live.pm_battery + ' %' : '') + ', ' + live.pm_rssi + ' dBm)</small>';
+        } else if (live.pm_state == 'searching') {
+            text = 'searching for ' + (live.pm_name || 'the meter') + ' <small>(turn the cranks to wake it)</small>';
+        } else if (live.pm_state == 'not paired') {
+            text = '<a href="/settings">not paired</a>';
+        } else {
+            text = live.pm_state;
+        }
+        setText('live_pm', text);
+        if (live.pm_state == 'connected' && live.pm_age_ms >= 0 && live.pm_age_ms < 3000 && live.power > 50 && live.pm_power > 50) {
+            pmWindow.push({ trainer: live.power, meter: live.pm_power });
+            if (pmWindow.length > 30) pmWindow.shift();
+        } else if (live.cadence < 30) {
+            pmWindow = [];
+        }
+        if (pmWindow.length >= 10) {
+            let t = pmWindow.reduce((sum, x) => sum + x.trainer, 0), m = pmWindow.reduce((sum, x) => sum + x.meter, 0);
+            setText('live_ratio', (t / m).toFixed(3) + ' <small>(' + (t / pmWindow.length).toFixed(0) + ' W vs ' + (m / pmWindow.length).toFixed(0) + ' W, last ' + pmWindow.length + ' s)</small>');
+        } else {
+            setText('live_ratio', live.pm_state == 'connected' ? '<small>pedal above 50 W for 10 s</small>' : '-');
+        }
+    }
+
     function updateLive() {
         fetch('/live', { method: 'GET', cache: 'no-store', headers: { 'Accept': 'application/json' } })
             .then(response => response.json())
@@ -132,6 +163,7 @@
                 setText('live_power', live.power + ' W');
                 setText('live_power_cal', live.power + ' W');
                 updateCalibration(live);
+                updatePowerMeter(live);
                 setText('live_cadence', live.cadence + ' rpm <small>(' + live.cadence_source + ')</small>');
                 setText('live_speed', live.speed_kph.toFixed(1) + ' km/h');
                 setText('live_zwift', live.zwift_clients > 0 ? (live.zwift_mode + ', ' + live.zwift_clients + ' connection(s)') : 'Not connected');
@@ -180,6 +212,8 @@
             <div>
                 <div class="form-control"><label>Trainer:</label><span id="live_trainer"></span></div>
                 <div class="form-control"><label>Power:</label><span id="live_power"></span></div>
+                <div class="form-control"><label>Power meter:</label><span id="live_pm"></span></div>
+                <div class="form-control"><label>Trainer ÷ meter:</label><span id="live_ratio"></span></div>
                 <div class="form-control"><label>Cadence:</label><span id="live_cadence"></span></div>
                 <div class="form-control"><label>Speed:</label><span id="live_speed"></span></div>
                 <div class="form-control"><label>Zwift:</label><span id="live_zwift"></span></div>
