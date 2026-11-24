@@ -515,11 +515,17 @@ bool DirConManager::processZwiftSyncRequest(Service *service, Characteristic *ch
               zwiftTrainerMode = TrainerMode::ERG_MODE;
               updateStatusMessage();            
             }
-            if (requestValues.find(0x00) != requestValues.end()) {
-              zwiftPower = requestValues.at(0x00);
+            {
+              int previousTarget = (int)zwiftPower;
+              if (requestValues.find(0x00) != requestValues.end()) {
+                zwiftPower = requestValues.at(0x00);
+              }
+              log_i("ERG target power: %d W", (int)zwiftPower);
+              // Zwift repeats the target every second; only changes are events
+              if ((int)zwiftPower != previousTarget) {
+                Telemetry::eventf(TelemetryEvent::ERG_TARGET, "%d W", (int)zwiftPower);
+              }
             }
-            log_i("ERG target power: %d W", (int)zwiftPower);
-            Telemetry::eventf(TelemetryEvent::ERG_TARGET, "%d W", (int)zwiftPower);
             TrainerControl::setTargetPower(zwiftPower);
             break;
 

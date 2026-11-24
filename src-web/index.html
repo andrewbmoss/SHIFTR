@@ -134,7 +134,7 @@
                 + (live.pm_balance >= 0 ? ' &middot; L ' + Math.round(live.pm_balance) + ' / R ' + (100 - Math.round(live.pm_balance)) : '')
                 + ' <small>(' + live.pm_name + (live.pm_battery >= 0 ? ', battery ' + live.pm_battery + ' %' : '') + ', ' + live.pm_rssi + ' dBm)</small>';
         } else if (live.pm_state == 'searching') {
-            text = 'searching for ' + (live.pm_name || 'the meter') + ' <small>(turn the cranks to wake it)</small>';
+            text = 'searching for ' + (live.pm_name || 'the meter') + ' <small>(it only accepts a connection for about a minute after waking up: if you\'re pedalling and it doesn\'t connect, stop until it goes to sleep, then pedal again)</small>';
         } else if (live.pm_state == 'not paired') {
             text = '<a href="/settings">not paired</a>';
         } else {

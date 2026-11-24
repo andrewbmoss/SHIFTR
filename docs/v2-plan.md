@@ -327,3 +327,42 @@ Test plan for the next ride: spindown in the Saris app after a 10 min warm-up; c
 before each block (Power2Max auto zero); ERG blocks at the same power with two
 different cadences (same power, different flywheel speed) to separate a power-dependent
 error from a speed-dependent one.
+
+## Comparison test (2026-11-23, Saris spindown, Power2Max 52/36 bike then Red 50/36 bike with Quarq)
+
+ERG blocks from `tools/workouts`, 95 s per half-block after 25 s settling. The Hammerhead Karoo
+recorded each meter over ANT+; after correcting its clock (+9 s) it matches the bridge's
+Bluetooth readings within 0.0–0.9 %, so both radios read the meters identically.
+
+| Block | Flywheel km/h | Trainer ÷ Power2Max | Trainer ÷ Quarq | Quarq ÷ Power2Max |
+|---|---|---|---|---|
+| 160 W, 70 rpm, 36T | 25 | 1.038 | 0.937 | 1.108 |
+| 160 W, 95 rpm, 36T | 33 | 1.023 | 0.945 | 1.083 |
+| 205 W, 70 rpm, 36T | 25 | 1.021 | 0.926 | 1.103 |
+| 205 W, 95 rpm, 36T | 33 | 1.007 | 0.930 | 1.083 |
+| 250 W, 70 rpm, 36T | 24-25 | 1.039 | 0.906 | 1.147 |
+| 250 W, 95 rpm, 36T | 33-34 | 1.018 | 0.899 | 1.132 |
+| 205 W, big ring, low cadence | 35-36 | 1.043 | 0.959 | 1.088 |
+| 205 W, big ring, high cadence | 45-46 | 1.074 | 0.969 | 1.108 |
+
+- **Quarq reads 10.6 % above the Power2Max on average (8–15 %)**, using the trainer as a
+  go-between. Matches the rider's experience outdoors.
+- The trainer reads relatively higher as flywheel speed rises: about +0.15–0.2 % per
+  km/h against *both* meters, so that's the trainer, not either meter.
+- With 2–4 % chain loss the trainer should read 0.96–0.98 × crank power. Against that,
+  the Power2Max is about 4–6 % low or the Quarq about 4–8 % high, or a mix. A second
+  trainer (KICKR CORE) would split it; ride the Red bike first next time to cancel
+  trainer warm-up drift.
+- Pedal balance: Power2Max 51–53 % left, Quarq 50–53 %; both are spider estimates, and the
+  Karoo shows the same values as the bridge.
+- Logging issues fixed in alpha.5: Zwift re-sends the ERG target every second, which
+  logged 2,797 events and overflowed the event buffer (two gaps); now only changes are
+  logged. The Power2Max took up to 7 minutes to reconnect while being pedalled: it only
+  advertises for about a minute after waking. The search now listens 5 s per attempt with
+  0.5 s pauses, and the status page explains letting it sleep and waking it.
+- Bridge health over 70 min: heap 82–87 KB free, no leak; the only pause is the known
+  5 s trainer reconnect.
+
+Phase 4 direction: the rider's reference is the Quarq, so Zwift should get
+*Power2Max × ~1.10* (Quarq-equivalent), falling back to the trainer with a speed-aware
+factor when the Power2Max is missing.

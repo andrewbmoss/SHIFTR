@@ -10,8 +10,11 @@
 
 namespace {
 
-constexpr uint32_t CONNECT_TIMEOUT_S = 3;      // one attempt listens this long for the meter's advertisement
-constexpr uint32_t ATTEMPT_PAUSE_MS = 3000;    // between attempts, leaves the radio to the trainer
+// The Power2Max advertises for only about a minute after it wakes up, so listen almost
+// continuously while searching. Attempts only run while the trainer is connected, so they
+// never hold up the trainer's own reconnect scans.
+constexpr uint32_t CONNECT_TIMEOUT_S = 5;      // one attempt listens this long for the meter's advertisement
+constexpr uint32_t ATTEMPT_PAUSE_MS = 500;     // between attempts
 constexpr uint32_t RSSI_INTERVAL_MS = 5000;
 constexpr uint32_t BATTERY_INTERVAL_MS = 600000;
 constexpr uint32_t SCAN_SECONDS = 10;
