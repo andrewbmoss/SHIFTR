@@ -1,0 +1,62 @@
+<workout_file>
+    <author>SHIFTR</author>
+    <name>SHIFTR power test - Power2Max bike</name>
+    <description>SHIFTR power meter comparison, Power2Max bike. ERG blocks at three powers and two cadences on the 36T small ring (same flywheel speed on every bike), then one block on the 52T big ring for higher flywheel speeds. Short coasts before each power level let the power meter zero itself. Do a spindown before starting.</description>
+    <sportType>bike</sportType>
+    <tags>
+        <tag name="SHIFTR"/>
+        <tag name="TEST"/>
+    </tags>
+    <workout>
+        <Warmup Duration="180" PowerLow="0.45" PowerHigh="0.60">
+            <textevent timeoffset="0" message="Small ring (36T). Add a logger marker: start Power2Max bike"/>
+        </Warmup>
+        <FreeRide Duration="15">
+            <textevent timeoffset="0" message="Stop pedalling 5 s (power meter zero)"/>
+        </FreeRide>
+        <SteadyState Duration="120" Power="0.55" Cadence="70">
+            <textevent timeoffset="0" message="Block 1: 55% FTP at 70 rpm, small ring"/>
+            <textevent timeoffset="60" message="Hold 70 rpm, stay seated, steady"/>
+        </SteadyState>
+        <SteadyState Duration="120" Power="0.55" Cadence="95">
+            <textevent timeoffset="0" message="Block 2: 55% FTP at 95 rpm, small ring"/>
+            <textevent timeoffset="60" message="Hold 95 rpm, stay seated, steady"/>
+        </SteadyState>
+        <FreeRide Duration="15">
+            <textevent timeoffset="0" message="Stop pedalling 5 s (power meter zero)"/>
+        </FreeRide>
+        <SteadyState Duration="120" Power="0.70" Cadence="70">
+            <textevent timeoffset="0" message="Block 3: 70% FTP at 70 rpm, small ring"/>
+            <textevent timeoffset="60" message="Hold 70 rpm, stay seated, steady"/>
+        </SteadyState>
+        <SteadyState Duration="120" Power="0.70" Cadence="95">
+            <textevent timeoffset="0" message="Block 4: 70% FTP at 95 rpm, small ring"/>
+            <textevent timeoffset="60" message="Hold 95 rpm, stay seated, steady"/>
+        </SteadyState>
+        <FreeRide Duration="15">
+            <textevent timeoffset="0" message="Stop pedalling 5 s (power meter zero)"/>
+        </FreeRide>
+        <SteadyState Duration="120" Power="0.85" Cadence="70">
+            <textevent timeoffset="0" message="Block 5: 85% FTP at 70 rpm, small ring"/>
+            <textevent timeoffset="60" message="Hold 70 rpm, stay seated, steady"/>
+        </SteadyState>
+        <SteadyState Duration="120" Power="0.85" Cadence="95">
+            <textevent timeoffset="0" message="Block 6: 85% FTP at 95 rpm, small ring"/>
+            <textevent timeoffset="60" message="Hold 95 rpm, stay seated, steady"/>
+        </SteadyState>
+        <FreeRide Duration="30">
+            <textevent timeoffset="0" message="Shift to the big ring (52T), then stop pedalling 5 s"/>
+        </FreeRide>
+        <SteadyState Duration="120" Power="0.70" Cadence="70">
+            <textevent timeoffset="0" message="Block 7: 70% FTP at 70 rpm, big ring 52T"/>
+            <textevent timeoffset="60" message="Hold 70 rpm, stay seated, steady"/>
+        </SteadyState>
+        <SteadyState Duration="120" Power="0.70" Cadence="90">
+            <textevent timeoffset="0" message="Block 8: 70% FTP at 90 rpm, big ring 52T"/>
+            <textevent timeoffset="60" message="Hold 90 rpm, stay seated, steady"/>
+        </SteadyState>
+        <Cooldown Duration="180" PowerLow="0.55" PowerHigh="0.40">
+            <textevent timeoffset="0" message="Done. Add a logger marker: end Power2Max bike"/>
+        </Cooldown>
+    </workout>
+</workout_file>
