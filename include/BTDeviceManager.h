@@ -19,6 +19,10 @@ class BTDeviceManager {
   static bool isStarted();
   static std::string getConnecedDeviceName();
   static std::string getConnectedAddress();
+  // adds a named device once per address; false when it was already listed or the list is full
+  static bool addScannedDevice(NimBLEAdvertisedDevice* device);
+  // names of the devices found so far, for the settings page
+  static std::vector<std::string> getScannedDeviceNames();
   // signal strength of the trainer connection, 0 when not connected
   static int getRssi();
   static bool writeBLECharacteristic(const NimBLEUUID& serviceUUID, const NimBLEUUID& characteristicUUID, std::vector<uint8_t>* data, bool withResponse = false);
@@ -43,6 +47,7 @@ class BTDeviceManager {
   static NimBLEClient* nimBLEClient;
   static std::vector<NimBLEUUID> remoteDeviceFilterUUIDs;
   static std::vector<NimBLEAdvertisedDevice> scannedDevices;
+
   static Timer<> scanTimer;
   static Timer<> connectTimer;
   static NimBLEAdvertisedDevice* getRemoteDevice();

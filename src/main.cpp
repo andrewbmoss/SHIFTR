@@ -373,12 +373,10 @@ void handleWebServerSettings() {
 
   String devices_json = "\"trainer_devices\": [";
   devices_json += "\"\",";
-  for (size_t deviceIndex = 0; deviceIndex < BTDeviceManager::getScannedDevices()->size(); deviceIndex++) {
-    if (BTDeviceManager::getScannedDevices()->at(deviceIndex).haveName()) {
-      devices_json += "\"";
-      devices_json += BTDeviceManager::getScannedDevices()->at(deviceIndex).getName().c_str();
-      devices_json += "\",";
-    }
+  for (const std::string& name : BTDeviceManager::getScannedDeviceNames()) {
+    devices_json += "\"";
+    devices_json += name.c_str();
+    devices_json += "\",";
   }
 
   if (devices_json.endsWith(",")) {

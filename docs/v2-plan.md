@@ -379,3 +379,28 @@ factor when the Power2Max is missing.
   alpha.6 adds `/crash` (summary), `/crash/dump` (ELF core dump) and `/crash/clear`, a crash
   section on the diagnostics page, and a boot event naming the crashed task. The alpha.5 and
   alpha.6 ELF files are kept for decoding.
+
+## Crash 2026-11-24 17:07: cause and fix (`alpha.7`, `v1.6.2`)
+
+Core dump (alpha.5, ELF SHA matches `bc87c5e5119ce11a`), task `nimble_host`:
+`abort` ← `std::terminate` ← `__cxa_throw` ← `operator new` ←
+`std::vector<NimBLEAdvertisedDevice>::push_back` ← `BTAdvertisedDeviceCallbacks::onResult`
+(BTAdvertisedDeviceCallbacks.cpp:18) ← `NimBLEScan::handleGapEvent` ← advertising report.
+
+Cause (inherited from upstream SHIFTR): while the trainer is off the bridge scans without end
+and appended *every* advertisement report to `scannedDevices`, without checking the address
+and without a limit. Phones and watches change their advertising data all the time, so the
+controller's duplicate filter reports them again and again. After about 20 hours with the trainer
+off (since the end of the 11-23 test) the vector had to grow again, `operator new` couldn't find
+a big enough block, threw `bad_alloc` in the NimBLE task, and the ESP32 aborted. v1 has the same
+bug; v2 just has less free heap, so it hits it sooner.
+
+Fix:
+- keep only devices with a name (the trainer is chosen by name, the settings page lists names);
+- each address once;
+- at most 24, with `reserve()` at start so the list never reallocates (pointers into it stay
+  valid); the trainer can always take the last slot so a crowded room can't keep it out;
+- a mutex between the NimBLE task (writer) and the main loop (readers);
+- one static scan callback object instead of a new one per scan start (small leak).
+
+v1.6.2 also gets the trainer reconnect client leak fix from v2 alpha.0.

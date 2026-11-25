@@ -1,6 +1,7 @@
 #include <BTAdvertisedDeviceCallbacks.h>
 #include <BTClientCallbacks.h>
 #include <BTDeviceManager.h>
+#include <mutex>
 #include <Config.h>
 #include <DirConManager.h>
 #include <TrainerControl.h>
@@ -10,6 +11,39 @@
 
 std::vector<NimBLEUUID> BTDeviceManager::remoteDeviceFilterUUIDs{};
 std::vector<NimBLEAdvertisedDevice> BTDeviceManager::scannedDevices{};
+// the list is written by the NimBLE host task and read by the main loop
+static std::mutex scannedDevicesMutex;
+static constexpr size_t MAX_SCANNED_DEVICES = 24;
+static BTAdvertisedDeviceCallbacks advertisedDeviceCallbacks;
+
+bool BTDeviceManager::addScannedDevice(NimBLEAdvertisedDevice* device) {
+  std::lock_guard<std::mutex> guard(scannedDevicesMutex);
+  for (NimBLEAdvertisedDevice& known : scannedDevices) {
+    if (known.getAddress() == device->getAddress()) {
+      return false;
+    }
+  }
+  if (scannedDevices.size() >= MAX_SCANNED_DEVICES) {
+    // a crowded room must not keep the trainer out: it takes the last slot
+    bool isTrainer = (remoteDeviceName != "") && device->haveName() && (device->getName().rfind(remoteDeviceName, 0) == 0);
+    if (!isTrainer) {
+      return false;
+    }
+    scannedDevices.back() = NimBLEAdvertisedDevice(*device);
+    return true;
+  }
+  scannedDevices.push_back(NimBLEAdvertisedDevice(*device));
+  return true;
+}
+
+std::vector<std::string> BTDeviceManager::getScannedDeviceNames() {
+  std::lock_guard<std::mutex> guard(scannedDevicesMutex);
+  std::vector<std::string> names;
+  for (NimBLEAdvertisedDevice& device : scannedDevices) {
+    if (device.haveName()) names.push_back(device.getName());
+  }
+  return names;
+}
 ServiceManager* BTDeviceManager::serviceManager{};
 std::string BTDeviceManager::deviceName;
 std::string BTDeviceManager::remoteDeviceName;
@@ -51,7 +85,12 @@ std::vector<NimBLEAdvertisedDevice>* BTDeviceManager::getScannedDevices() {
 
 bool BTDeviceManager::start() {
   if (!started) {
-    scannedDevices.clear();
+    {
+      std::lock_guard<std::mutex> guard(scannedDevicesMutex);
+      scannedDevices.clear();
+      // reserved once: push_back below the cap never reallocates, so pointers into the list stay valid
+      scannedDevices.reserve(MAX_SCANNED_DEVICES);
+    }
     if (serviceManager == nullptr) {
       return false;
     }
@@ -142,6 +181,7 @@ void BTDeviceManager::addRemoteDeviceFilter(const NimBLEUUID& serviceUUID) {
 }
 
 NimBLEAdvertisedDevice* BTDeviceManager::getRemoteDevice() {
+  std::lock_guard<std::mutex> guard(scannedDevicesMutex);
   if (remoteDeviceName != "") {
     for (size_t deviceIndex = 0; deviceIndex < scannedDevices.size(); deviceIndex++) {
       NimBLEAdvertisedDevice* scannedDevice = &scannedDevices.at(deviceIndex);
@@ -266,12 +306,16 @@ bool BTDeviceManager::doScan(void* argument) {
           connected = false;
         }
       }
-      nimBLEScanner->setAdvertisedDeviceCallbacks(new BTAdvertisedDeviceCallbacks(), false);
+      // one static instance; v1 allocated a new one on every scan start and never freed it
+      nimBLEScanner->setAdvertisedDeviceCallbacks(&advertisedDeviceCallbacks, false);
       nimBLEScanner->setActiveScan(true);
       nimBLEScanner->setInterval(97);
       nimBLEScanner->setWindow(37);
       nimBLEScanner->setMaxResults(0);
-      scannedDevices.clear();
+      {
+        std::lock_guard<std::mutex> guard(scannedDevicesMutex);
+        scannedDevices.clear();
+      }
       if (nimBLEScanner->start(0, BTDeviceManager::onScanEnd, false)) {
         statusMessage = "Scanning...";
         log_i("BLE scan started successfully");
