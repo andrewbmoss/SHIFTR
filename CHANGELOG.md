@@ -5,6 +5,19 @@ v1.4.0 by Jürgen Leber, on which it is based. Firmware versions carry an `-ftms
 Developed and tested with a Saris H1 (Hammer), Zwift on Windows, a Zwift Cog and a Zwift
 Click, through a WT32-ETH01 on Ethernet.
 
+## v1.6.2-ftms (2026-11-25)
+
+### Fixed
+- **Crash after many hours with the trainer off** (inherited from upstream SHIFTR). While it
+  looks for the trainer, the bridge scans without end and added every Bluetooth advertisement
+  to a list, with no de-duplication and no limit. Phones and watches change their advertising
+  data constantly, so the list kept growing until memory ran out and the ESP32 aborted
+  (found from a core dump: `operator new` failing in the NimBLE task). The list now keeps only
+  named devices, each once, at most 24, with its memory reserved up front; the trainer always
+  gets a slot.
+- Each trainer reconnect created a new Bluetooth client and never freed the old one.
+- A new scan callback object was allocated on every scan start and never freed.
+
 ## v1.6.1-ftms (2026-11-22)
 
 ### Added

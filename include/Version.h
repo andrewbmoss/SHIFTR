@@ -7,10 +7,10 @@
 
 #ifndef VERSION_H
 #define VERSION_H
-#define VERSION "v1.6.1-ftms"
+#define VERSION "v1.6.2-ftms"
 #define VERSION_MAJOR 1
 #define VERSION_MINOR 6
-#define VERSION_PATCH 1
+#define VERSION_PATCH 2
 #define VERSION_BUILD "saris"
-#define VERSION_TIMESTAMP "2026-Nov-22"
+#define VERSION_TIMESTAMP "2026-Nov-25"
 #endif
