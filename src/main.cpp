@@ -19,6 +19,7 @@
 #include <SensorProbe.h>
 #include <Telemetry.h>
 #include <PowerMeter.h>
+#include <CrashReport.h>
 #include <esp_heap_caps.h>
 
 #define STR_HELPER(x) #x
@@ -60,6 +61,7 @@ void setup() {
 
   // logger buffers first, while the heap is one big block
   Telemetry::begin();
+  CrashReport::begin();
 
   // initialize bluetooth device manager
   BTDeviceManager::setLocalDeviceName(Utils::getDeviceName());
@@ -115,6 +117,13 @@ void setup() {
   webServer.on("/log/info", HTTP_GET, [] { Telemetry::handleInfo(webServer); });
   webServer.on("/log/marker", HTTP_POST, [] { Telemetry::handleMarker(webServer); });
   webServer.on("/powermeter", HTTP_GET, [] { PowerMeter::handleStatus(webServer); });
+  webServer.on("/crash", HTTP_GET, [] { CrashReport::handleSummary(webServer); });
+  webServer.on("/crash/dump", HTTP_GET, [] { CrashReport::handleDump(webServer); });
+  webServer.on("/crash/clear", HTTP_POST, [] {
+    if (!webServer.authenticate(SettingsManager::getUsername().c_str(), SettingsManager::getAPPassword().c_str())) {
+      return webServer.requestAuthentication();
+    }
+    CrashReport::handleClear(webServer); });
   webServer.on("/powermeter/scan", HTTP_POST, [] {
     if (!webServer.authenticate(SettingsManager::getUsername().c_str(), SettingsManager::getAPPassword().c_str())) {
       return webServer.requestAuthentication();

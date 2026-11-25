@@ -18,12 +18,13 @@
 <script type="text/javascript">
     let zwiftReport = null;
     let probeReport = null;
+    let crashReport = null;
     let polling = null;
 
     function show(id, text) { document.getElementById(id).innerHTML = text; }
 
     function combined() {
-        return JSON.stringify({ version: document.getElementById('version').textContent, taken: new Date().toISOString(), zwift: zwiftReport, power_meter: probeReport }, null, 2);
+        return JSON.stringify({ version: document.getElementById('version').textContent, taken: new Date().toISOString(), zwift: zwiftReport, power_meter: probeReport, crash: crashReport }, null, 2);
     }
 
     function render() {
@@ -120,7 +121,26 @@
         show('copy_state', 'Downloaded');
     }
 
+    function loadCrash() {
+        fetch('/crash', { cache: 'no-store' }).then(r => r.json()).then(c => {
+            crashReport = c;
+            if (!c.present) {
+                show('crash_summary', 'No crash recorded. Last restart: ' + c.reset_reason + '.');
+                document.getElementById('crash_actions').style.display = 'none';
+            } else {
+                show('crash_summary', '<b>Crash recorded</b> in task <b>' + c.task + '</b>: ' + c.exception + ' at ' + c.pc + ' (address ' + c.address + '). Last restart: ' + c.reset_reason + '.');
+                document.getElementById('crash_actions').style.display = '';
+            }
+            render();
+        }).catch(e => show('crash_summary', 'Failed: ' + e));
+    }
+
+    function clearCrash() {
+        fetch('/crash/clear', { method: 'POST' }).then(() => loadCrash());
+    }
+
     function setup() {
+        loadCrash();
         fetch('/status', { cache: 'no-store' }).then(r => r.json()).then(s => show('version', s.version)).catch(e => {});
         fetch('/probe/report', { cache: 'no-store' }).then(r => r.json()).then(report => {
             if (report.state != 'idle') { probeReport = report; show('probe_summary', summarise(report)); render(); }
@@ -168,6 +188,19 @@
                 <button class="btn" id="probe_btn" onclick="startProbe()"><label>Probe power meter</label></button>
             </div>
             <div id="probe_summary" class="summary"></div>
+        </div>
+    </div>
+
+    <div class="container">
+        <h1>Crash report</h1>
+        <div class="form">
+            <div id="crash_summary">Loading…</div>
+            <div class="button-container" id="crash_actions" style="display: none">
+                <a class="btn" href="/crash/dump"><label>Download core dump</label></a>
+                <button class="btn" onclick="clearCrash()"><label>Clear</label></button>
+            </div>
+            <p style="font-size: 13px; opacity: 0.8; text-align: left">When the bridge crashes it saves what it was doing to flash. Send the
+                report (Copy or Download report below) and the core dump file before clearing it.</p>
         </div>
     </div>
 

@@ -366,3 +366,16 @@ Bluetooth readings within 0.0–0.9 %, so both radios read the meters identicall
 Phase 4 direction: the rider's reference is the Quarq, so Zwift should get
 *Power2Max × ~1.10* (Quarq-equivalent), falling back to the trainer with a speed-aware
 factor when the Power2Max is missing.
+
+## Race log (2026-11-24, 67 min pedalling, `alpha.5`)
+
+- Steady stretches: trainer ÷ Power2Max 1.032 (1.045 at 20–30 km/h, 1.028 at 30–35 km/h), in
+  line with the comparison test. Whole race: trainer 226 W, Power2Max 220 W, so
+  Power2Max × 1.106 (Quarq scale) would have been 243 W.
+- No missing samples, no loop stalls, heap 76–85 KB, Power2Max connected 97.6 % of the time
+  the trainer was.
+- **The bridge rebooted with a crash ("reset panic") at 17:07**, two hours before the race,
+  with nobody riding. Cause unknown. Core dumps to flash are enabled in this framework, so
+  alpha.6 adds `/crash` (summary), `/crash/dump` (ELF core dump) and `/crash/clear`, a crash
+  section on the diagnostics page, and a boot event naming the crashed task. The alpha.5 and
+  alpha.6 ELF files are kept for decoding.
