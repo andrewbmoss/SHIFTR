@@ -11,7 +11,8 @@
 namespace {
 
 const char* const NVS_NAMESPACE = "shiftr-v2";
-constexpr uint32_t UPDATE_INTERVAL_MS = 1000;
+constexpr uint32_t UPDATE_INTERVAL_MS = 1000;   // learning
+constexpr uint32_t REFRESH_INTERVAL_MS = 100;   // output: picks up each new reading within 0.1 s
 constexpr uint32_t FRESH_MS = 2500;
 constexpr uint32_t SAVE_INTERVAL_MS = 600000;  // save the learned factor at most every 10 min
 const NimBLEUUID INDOOR_BIKE_DATA((uint16_t)0x2AD2);
@@ -26,6 +27,7 @@ double outCadence = 0;
 PowerCal::Source outSource = PowerCal::Source::NONE;
 double outFactor = 1.0;
 uint32_t lastUpdateAt = 0;
+uint32_t lastRefreshAt = 0;
 uint32_t lastSaveAt = 0;
 double savedFactor = 0;
 PowerCal::Source lastLoggedSource = PowerCal::Source::NONE;
@@ -79,19 +81,8 @@ void PowerOutput::begin() {
         calibrator.getConfig().meterScale, calibrator.getConfig().chainLossPercent, savedFactor);
 }
 
-void PowerOutput::update() {
-  uint32_t now = millis();
-  if ((lastUpdateAt != 0) && (now - lastUpdateAt < UPDATE_INTERVAL_MS)) return;
-  lastUpdateAt = now;
-
-  // a trainer that comes back after being released was probably just spun down: relearn
-  bool released = BTDeviceManager::isReleased();
-  if (wasReleased && !released) {
-    calibrator.reset();
-    Telemetry::event(TelemetryEvent::POWER_OUTPUT, "trainer back; relearning factor");
-  }
-  wasReleased = released;
-
+namespace {
+PowerCal::Input readInputs() {
   PowerCal::Input input;
   input.trainerFresh = BTDeviceManager::isConnected() && (TrainerControl::getMillisSinceLastData() < FRESH_MS);
   input.trainerPower = TrainerControl::getPower();
@@ -101,14 +92,43 @@ void PowerOutput::update() {
   input.meterFresh = meter.connected && (meter.ageMs < FRESH_MS);
   input.meterPower = meter.power;
   input.meterCadence = meter.cadence;
-  PowerCal::Output output = calibrator.update(input);
+  return input;
+}
 
+void publish(const PowerCal::Output& output) {
   portENTER_CRITICAL(&lock);
   outPower = (int16_t)lround(output.power);
   outCadence = output.cadence;
   outSource = output.source;
   outFactor = calibrator.factor();
   portEXIT_CRITICAL(&lock);
+}
+}  // namespace
+
+void PowerOutput::update() {
+  uint32_t now = millis();
+  if ((lastUpdateAt != 0) && (now - lastUpdateAt < UPDATE_INTERVAL_MS)) {
+    // between learning steps, keep the output current: alpha.8 refreshed it only once a
+    // second, so Zwift could get a reading up to a second old
+    if (now - lastRefreshAt >= REFRESH_INTERVAL_MS) {
+      lastRefreshAt = now;
+      publish(calibrator.compute(readInputs()));
+    }
+    return;
+  }
+  lastUpdateAt = now;
+  lastRefreshAt = now;
+
+  // a trainer that comes back after being released was probably just spun down: relearn
+  bool released = BTDeviceManager::isReleased();
+  if (wasReleased && !released) {
+    calibrator.reset();
+    Telemetry::event(TelemetryEvent::POWER_OUTPUT, "trainer back; relearning factor");
+  }
+  wasReleased = released;
+
+  PowerCal::Output output = calibrator.update(readInputs());
+  publish(output);
 
   if (output.source != lastLoggedSource) {
     // NONE comes and goes with every stop; only log real switches

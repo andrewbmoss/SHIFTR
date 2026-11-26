@@ -64,8 +64,10 @@ class Calibrator {
   // forget what was learned (e.g. after a spindown); the prior becomes the baseline
   void reset();
 
-  // call once per second
+  // call once per second: learns and returns the output
   Output update(const Input& input);
+  // the output for the latest readings without learning; call as often as new data arrives
+  Output compute(const Input& input) const;
 
   double baselineFactor() const;
   double factor() const;          // crank-equivalent ÷ trainer, the one in use

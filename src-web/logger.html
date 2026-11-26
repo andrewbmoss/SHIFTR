@@ -41,6 +41,22 @@
     let lastSample = null;
     let failures = 0;
     let sampleColumns = [];
+    let lastTickAt = 0;
+
+    // The worker ticks every second. A much longer gap means the browser froze the page (Edge
+    // sleeping tabs / efficiency mode, Chrome energy saver) or the PC slept: everything older
+    // than the bridge's 4 minutes is lost, so say so in the log and on the page.
+    function checkPaused() {
+        let now = Date.now();
+        let gap = lastTickAt ? now - lastTickAt : 0;
+        lastTickAt = now;
+        if (gap > 20000 && session && session.active) {
+            session.pauses = (session.pauses || 0) + 1;
+            session.pausedMs = (session.pausedMs || 0) + gap;
+            appendRows([localEvent('logger_paused', 'page was paused for ' + Math.round(gap / 1000) + ' s (sleeping tab, energy saver or PC asleep)')]);
+        }
+    }
+    document.addEventListener('freeze', () => { if (session && session.active) appendRows([localEvent('logger', 'browser froze the page')]); });
 
     function $(id) { return document.getElementById(id); }
     function setHtml(id, html) { $(id).innerHTML = html; }
@@ -222,7 +238,8 @@
         if (worker) return;
         let source = 'let timer = null; onmessage = (m) => { if (m.data == "start" && !timer) { timer = setInterval(() => postMessage("tick"), 1000); } else if (m.data == "stop") { clearInterval(timer); timer = null; } };';
         worker = new Worker(URL.createObjectURL(new Blob([source], { type: 'application/javascript' })));
-        worker.onmessage = () => poll();
+        lastTickAt = Date.now();
+        worker.onmessage = () => { checkPaused(); poll(); };
         worker.postMessage('start');
     }
 
@@ -363,6 +380,7 @@
             setHtml('state', 'Not logging');
             setHtml('stats', '');
             setHtml('live', '');
+            setHtml('paused', '');
             return;
         }
         let age = lastOkAt ? Date.now() - lastOkAt : null;
@@ -373,6 +391,10 @@
         setHtml('stats', session.name + ' &middot; ' + duration(Date.now() - session.started) + ' &middot; ' + (session.samples || 0) + ' samples, ' + (session.events || 0) + ' events'
             + (session.gaps ? ' &middot; <span class="warn">' + session.gaps + ' gap(s)</span>' : '')
             + (session.reboots ? ' &middot; <span class="warn">bridge rebooted ' + session.reboots + '×</span>' : ''));
+        setHtml('paused', session.pauses ? '<span class="bad">The browser paused this page ' + session.pauses + '× (' + duration(session.pausedMs || 0)
+            + ' in total), so data is missing.</span> Drag this tab out into its own window and keep that window open (it can sit behind Zwift), '
+            + 'and add the bridge under Edge <i>Settings &gt; System and performance &gt; Never put these sites to sleep</i> '
+            + '(Chrome: <i>Settings &gt; Performance &gt; Always keep these sites active</i>).' : '');
         if (lastSample) {
             let heap = Number(column('free_heap'));
             setHtml('live', column('tr_power') + ' W &middot; ' + column('tr_cadence') + ' rpm &middot; ' + column('mode')
@@ -451,6 +473,7 @@
             <div class="state" id="state">Loading…</div>
             <div id="stats"></div>
             <div id="live"></div>
+            <div id="paused" class="hint"></div>
             <div class="button-container">
                 <button class="btn" id="start_btn" onclick="startLogging()"><label>Start logging</label></button>
                 <button class="btn" id="stop_btn" onclick="stopLogging()" disabled><label>Stop</label></button>
@@ -476,8 +499,9 @@
             <p class="hint">Recordings are kept in this browser until you delete them. <i>Download CSV</i> works while
                 recording too. Each row has the PC's clock time, so it lines up with Zwift's activity file and your head
                 unit's recording.</p>
-            <p class="hint">Keep this tab open while riding; it can be in the background or another window. To stop
-                the browser from putting it to sleep on long rides, add the bridge's address under Chrome
+            <p class="hint"><b>Run this page in its own window</b> (drag the tab out of the tab bar) and leave that window open
+                while riding; it can sit behind Zwift. Browsers put <i>background tabs</i> to sleep after about 5 minutes, which
+                stops the logging. Also add the bridge's address under Chrome
                 <i>Settings &gt; Performance &gt; Always keep these sites active</i>, or Edge <i>Settings &gt; System
                 and performance &gt; Never put these sites to sleep</i>. If it does get closed or reloaded, it carries on
                 where it left off, and anything older than 4 minutes is marked as a gap.</p>

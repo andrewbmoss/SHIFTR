@@ -94,6 +94,11 @@ Output Calibrator::update(const Input& input) {
     warning = false;
   }
 
+  return compute(input);
+}
+
+Output Calibrator::compute(const Input& input) const {
+  double crank = input.meterPower * config.meterScale;
   Output output;
   if (config.mode == Mode::TRAINER) {
     if (input.trainerFresh) {

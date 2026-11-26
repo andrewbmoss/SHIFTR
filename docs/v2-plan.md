@@ -460,3 +460,21 @@ only the Red bike.
   `out_source` can be `none`.
 - Replay of real rides through the calibrator: Monday's Power2Max test and the 11-24 race
   gave no warnings; the learned factor stayed within ±3.1 % of the baseline.
+
+## Ride 2026-11-26 (`alpha.8`): findings, fixes in `alpha.9`
+
+- Power output: Power2Max × 1.055 to Zwift 89 % of the captured time, trainer fallback during the
+  re-pairing at the start; output ÷ trainer 1.029 while pedalling. Learned factor 1.012–1.050,
+  saved 1.0308 / 1.0179 / 1.0262, no drift warning. Heap 80–107 KB free.
+- The Hammer reports FTMS target setting features 0x0000E00C: power, resistance, simulation,
+  wheel circumference **and spin down control**, so a built-in spindown is possible.
+- *To Zwift* lagged the Power2Max by up to a second: the output was recomputed once per second on
+  a grid unrelated to the meter's packets. alpha.9 recomputes it every 100 ms
+  (`Calibrator::compute`), learning stays at 1 Hz.
+- **Logger lost 06:11–08:23** (2 h 12 min): the page stopped fetching exactly 5 min after Start
+  and resumed without a reload when brought back, which is what Edge's sleeping tabs (efficiency
+  mode) or Chrome's energy saver do to background tabs; they freeze the Web Worker too. The
+  logging PC wasn't the one linked here, so the exact setting couldn't be checked. alpha.9: the
+  page notices any pause over 20 s, logs a `logger_paused` event with its length and shows a
+  warning with the fix; the instructions now say to run the logger in its own window.
+- The old core dump is still stored (logged at every boot) until it is cleared.
