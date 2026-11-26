@@ -33,6 +33,12 @@ class PowerOutput {
   // rewrite a trainer notification on its way to Zwift (IBD / CPS); false = leave as is
   static bool rewriteForZwift(const NimBLEUUID& characteristicUUID, uint8_t* data, size_t length);
 
+  // the trainer was spun down: forget the learned factor and relearn
+  static void onTrainerRecalibrated();
+  // POST /trainer/spindown, POST /trainer/spindown/cancel
+  static void handleSpinDown(WebServer& server);
+  static void handleSpinDownCancel(WebServer& server);
+
   // GET/POST /power/settings, POST /power/reset, POST /trainer/release, POST /trainer/resume
   static void handleSettingsGet(WebServer& server);
   static void handleSettingsPost(WebServer& server);

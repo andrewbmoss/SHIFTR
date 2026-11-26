@@ -560,6 +560,65 @@ void test_rewrite_cycling_power(void) {
   TEST_ASSERT_EQUAL_UINT16(16, parsed.crankRevolutions);
 }
 
+// ---------- FTMS spin down ----------
+void test_spindown_encode_and_parse(void) {
+  std::vector<uint8_t> start = TrainerProtocol::ftmsSpinDownControl(TrainerProtocol::FTMS_SPIN_DOWN_START);
+  TEST_ASSERT_EQUAL_UINT8(0x13, start[0]);
+  TEST_ASSERT_EQUAL_UINT8(0x01, start[1]);
+  // success, low 28.00 km/h (2800 = 0x0AF0), high 32.00 km/h (3200 = 0x0C80)
+  uint8_t response[] = {0x80, 0x13, 0x01, 0xF0, 0x0A, 0x80, 0x0C};
+  uint8_t result = 0;
+  double low = 0, high = 0;
+  TEST_ASSERT_TRUE(TrainerProtocol::parseSpinDownResponse(response, sizeof(response), result, low, high));
+  TEST_ASSERT_EQUAL_UINT8(1, result);
+  TEST_ASSERT_DOUBLE_WITHIN(1e-9, 28.0, low);
+  TEST_ASSERT_DOUBLE_WITHIN(1e-9, 32.0, high);
+  uint8_t other[] = {0x80, 0x11, 0x01};
+  TEST_ASSERT_FALSE(TrainerProtocol::parseSpinDownResponse(other, sizeof(other), result, low, high));
+}
+
+void test_spindown_happy_path(void) {
+  TrainerProtocol::SpinDown spinDown;
+  spinDown.start(1000);
+  TEST_ASSERT_TRUE(spinDown.active());
+  spinDown.onResponse(0x01, 28, 32, 1200);
+  TEST_ASSERT_EQUAL_STRING("speed_up", spinDown.getStateName());
+  TEST_ASSERT_DOUBLE_WITHIN(1e-9, 32, spinDown.getTargetHighKph());
+  spinDown.onStatus(TrainerProtocol::FTMS_SPIN_DOWN_STATUS_STOP_PEDALING, 15000);
+  TEST_ASSERT_EQUAL_STRING("coast", spinDown.getStateName());
+  spinDown.onStatus(TrainerProtocol::FTMS_SPIN_DOWN_STATUS_SUCCESS, 30000);
+  TEST_ASSERT_EQUAL_STRING("success", spinDown.getStateName());
+  TEST_ASSERT_FALSE(spinDown.active());
+  spinDown.tick(30000 + TrainerProtocol::SpinDown::RESULT_SHOWN_MS + 1);
+  TEST_ASSERT_EQUAL_STRING("idle", spinDown.getStateName());
+}
+
+void test_spindown_failures(void) {
+  TrainerProtocol::SpinDown spinDown;
+  spinDown.start(0);
+  spinDown.tick(TrainerProtocol::SpinDown::ANSWER_TIMEOUT_MS + 1);
+  TEST_ASSERT_EQUAL_STRING("failed", spinDown.getStateName());
+  spinDown.start(0);
+  spinDown.onResponse(0x05, 0, 0, 100);  // control not permitted
+  TEST_ASSERT_EQUAL_STRING("failed", spinDown.getStateName());
+  spinDown.start(0);
+  spinDown.onResponse(0x01, 28, 32, 100);
+  spinDown.onStatus(TrainerProtocol::FTMS_SPIN_DOWN_STATUS_ERROR, 5000);
+  TEST_ASSERT_EQUAL_STRING("failed", spinDown.getStateName());
+  spinDown.start(0);
+  spinDown.onResponse(0x01, 28, 32, 100);
+  spinDown.tick(TrainerProtocol::SpinDown::PROCEDURE_TIMEOUT_MS + 1);
+  TEST_ASSERT_EQUAL_STRING("failed", spinDown.getStateName());
+  // a "stop pedalling" without a speed range still moves on
+  spinDown.start(0);
+  spinDown.onStatus(TrainerProtocol::FTMS_SPIN_DOWN_STATUS_STOP_PEDALING, 100);
+  TEST_ASSERT_EQUAL_STRING("coast", spinDown.getStateName());
+  // the trainer asking for a spin down while idle is remembered
+  TrainerProtocol::SpinDown idle;
+  idle.onStatus(TrainerProtocol::FTMS_SPIN_DOWN_STATUS_REQUESTED, 0);
+  TEST_ASSERT_TRUE(idle.wasRequestedByTrainer());
+}
+
 int main(int argc, char** argv) {
   Logger::defaultLogLevel = LOG_LEVEL_ERROR;
   UNITY_BEGIN();
@@ -589,6 +648,9 @@ int main(int argc, char** argv) {
   RUN_TEST(test_downhill_harder_gear_needs_less);
   RUN_TEST(test_trainer_weight_conversion);
   RUN_TEST(test_wind_coefficient_units);
+  RUN_TEST(test_spindown_encode_and_parse);
+  RUN_TEST(test_spindown_happy_path);
+  RUN_TEST(test_spindown_failures);
   RUN_TEST(test_calibrator_learns_chain_loss);
   RUN_TEST(test_calibrator_fallback_is_continuous);
   RUN_TEST(test_calibrator_warns_on_drift);

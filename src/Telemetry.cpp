@@ -71,7 +71,7 @@ struct Event {
 
 const char* const EVENT_NAMES[] = {"boot", "marker", "trainer_connected", "trainer_disconnected", "control_granted", "control_refused",
                                    "control_lost", "command_failed", "zwift_connected", "zwift_disconnected", "mode", "shift",
-                                   "erg_target", "settings_saved", "probe", "logger", "power_meter", "power_output"};
+                                   "erg_target", "settings_saved", "probe", "logger", "power_meter", "power_output", "spindown"};
 static_assert(sizeof(EVENT_NAMES) / sizeof(EVENT_NAMES[0]) == (size_t)TelemetryEvent::COUNT, "event names");
 
 const char* const SAMPLE_COLUMNS =

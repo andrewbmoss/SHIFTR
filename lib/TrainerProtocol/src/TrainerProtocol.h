@@ -47,6 +47,57 @@ enum FTMSResultCode : uint8_t {
   FTMS_RESULT_CONTROL_NOT_PERMITTED = 0x05
 };
 
+// ---------------------------------------------------------------------------
+// FTMS spin down (op 0x13 on the control point, status 0x14 on Fitness Machine Status)
+// ---------------------------------------------------------------------------
+constexpr uint8_t FTMS_SPIN_DOWN_CONTROL = 0x13;
+constexpr uint8_t FTMS_SPIN_DOWN_START = 0x01;
+constexpr uint8_t FTMS_SPIN_DOWN_IGNORE = 0x02;
+constexpr uint8_t FTMS_STATUS_SPIN_DOWN = 0x14;
+constexpr uint8_t FTMS_SPIN_DOWN_STATUS_REQUESTED = 0x01;
+constexpr uint8_t FTMS_SPIN_DOWN_STATUS_SUCCESS = 0x02;
+constexpr uint8_t FTMS_SPIN_DOWN_STATUS_ERROR = 0x03;
+constexpr uint8_t FTMS_SPIN_DOWN_STATUS_STOP_PEDALING = 0x04;
+std::vector<uint8_t> ftmsSpinDownControl(uint8_t parameter);
+// [0x80, 0x13, result, target speed low (UINT16 0.01 km/h), target speed high] - targets only on success
+bool parseSpinDownResponse(const uint8_t* data, size_t length, uint8_t& result, double& lowKph, double& highKph);
+
+// The spin down procedure as seen from the client: start -> trainer answers with a speed range ->
+// rider speeds up -> trainer says "stop pedalling" -> rider coasts -> trainer reports success or error.
+class SpinDown {
+ public:
+  enum class State : uint8_t { IDLE = 0, STARTING, SPEED_UP, COAST, SUCCESS, FAILED };
+  static constexpr uint32_t ANSWER_TIMEOUT_MS = 5000;
+  static constexpr uint32_t PROCEDURE_TIMEOUT_MS = 120000;
+  static constexpr uint32_t RESULT_SHOWN_MS = 60000;
+
+  void start(uint32_t now);
+  void onResponse(uint8_t result, double lowKph, double highKph, uint32_t now);
+  void onStatus(uint8_t status, uint32_t now);
+  void tick(uint32_t now);
+  void cancel(uint32_t now);
+  // procedure running: normal trainer commands must wait
+  bool active() const { return (state == State::STARTING) || (state == State::SPEED_UP) || (state == State::COAST); }
+  State getState() const { return state; }
+  const char* getStateName() const;
+  double getTargetLowKph() const { return targetLow; }
+  double getTargetHighKph() const { return targetHigh; }
+  // fixed text (no allocation: may be called inside a critical section)
+  const char* getMessage() const { return message; }
+  // set when the trainer itself asked for a spin down (status 0x14 0x01 while idle)
+  bool wasRequestedByTrainer() const { return requestedByTrainer; }
+
+ private:
+  State state = State::IDLE;
+  uint32_t startedAt = 0;
+  uint32_t stateAt = 0;
+  double targetLow = 0;
+  double targetHigh = 0;
+  bool requestedByTrainer = false;
+  const char* message = "";
+  void fail(const char* reason, uint32_t now);
+};
+
 // Fitness Machine Status op code meaning "control permission lost"
 constexpr uint8_t FTMS_STATUS_RESET = 0x01;
 constexpr uint8_t FTMS_STATUS_CONTROL_PERMISSION_LOST = 0xFF;

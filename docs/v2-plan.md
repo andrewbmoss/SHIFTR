@@ -478,3 +478,20 @@ only the Red bike.
   page notices any pause over 20 s, logs a `logger_paused` event with its length and shows a
   warning with the fix; the instructions now say to run the logger in its own window.
 - The old core dump is still stored (logged at every boot) until it is cleared.
+
+## Built-in spindown (`alpha.10`)
+
+- `TrainerProtocol`: `ftmsSpinDownControl()`, `parseSpinDownResponse()` (speed range in 0.01 km/h),
+  `SpinDown` state machine (idle → starting → speed_up → coast → success/failed; 5 s answer
+  timeout, 2 min procedure timeout, result shown 60 s; remembers a trainer-initiated request).
+  Messages are fixed strings because the machine is updated inside spinlocks. Tests added (49).
+- `TrainerControl`: `startSpinDown()` requires FTMS, spin-down support (target setting bit 15) and
+  control; the start command goes out from the main loop; while active no other command is sent
+  (Zwift's grade/ERG updates stay pending); the control-point response and Fitness Machine Status
+  0x14 drive the machine; afterwards Start/Resume and the last command are re-sent and, on
+  success, `PowerOutput::onTrainerRecalibrated()` resets the learned factor.
+- Endpoints `/trainer/spindown`, `/trainer/spindown/cancel`; `/live` gains `sd_*`; status page
+  shows step-by-step instructions with the live trainer speed; the drift warning and a
+  trainer-initiated request offer *Spindown*; events `spindown`.
+- Not yet tried on the Hammer: the exact speed range and status sequence it sends are logged as
+  events on the first run.

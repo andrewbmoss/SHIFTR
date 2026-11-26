@@ -310,6 +310,97 @@ bool rewriteCyclingPowerMeasurement(uint8_t* data, size_t length, int16_t powerW
   return true;
 }
 
+std::vector<uint8_t> ftmsSpinDownControl(uint8_t parameter) { return {FTMS_SPIN_DOWN_CONTROL, parameter}; }
+
+bool parseSpinDownResponse(const uint8_t* data, size_t length, uint8_t& result, double& lowKph, double& highKph) {
+  if ((data == nullptr) || (length < 3) || (data[0] != FTMS_RESPONSE_CODE) || (data[1] != FTMS_SPIN_DOWN_CONTROL)) return false;
+  result = data[2];
+  lowKph = 0;
+  highKph = 0;
+  if (length >= 7) {
+    lowKph = (data[3] | (data[4] << 8)) / 100.0;
+    highKph = (data[5] | (data[6] << 8)) / 100.0;
+  }
+  return true;
+}
+
+void SpinDown::start(uint32_t now) {
+  state = State::STARTING;
+  startedAt = now;
+  stateAt = now;
+  targetLow = 0;
+  targetHigh = 0;
+  requestedByTrainer = false;
+  message = "asking the trainer";
+}
+
+void SpinDown::fail(const char* reason, uint32_t now) {
+  state = State::FAILED;
+  stateAt = now;
+  message = reason;
+}
+
+void SpinDown::onResponse(uint8_t result, double lowKph, double highKph, uint32_t now) {
+  if (state != State::STARTING) return;
+  if (result != FTMS_RESULT_SUCCESS) {
+    static const char* const reasons[] = {"start refused", "start refused", "start refused: the trainer doesn't support it", "start refused: invalid parameter",
+                                          "start refused: the trainer couldn't start it", "start refused: no control (another app connected?)"};
+    fail((result < 6) ? reasons[result] : "start refused", now);
+    return;
+  }
+  state = State::SPEED_UP;
+  stateAt = now;
+  targetLow = lowKph;
+  targetHigh = highKph;
+  message = "speed up";
+}
+
+void SpinDown::onStatus(uint8_t status, uint32_t now) {
+  if (!active()) {
+    if ((status == FTMS_SPIN_DOWN_STATUS_REQUESTED) && (state == State::IDLE)) requestedByTrainer = true;
+    return;
+  }
+  switch (status) {
+    case FTMS_SPIN_DOWN_STATUS_STOP_PEDALING:
+      // some trainers skip the response's speed range and go straight here
+      state = State::COAST;
+      stateAt = now;
+      message = "stop pedalling";
+      break;
+    case FTMS_SPIN_DOWN_STATUS_SUCCESS:
+      state = State::SUCCESS;
+      stateAt = now;
+      message = "done";
+      requestedByTrainer = false;
+      break;
+    case FTMS_SPIN_DOWN_STATUS_ERROR:
+      fail("the trainer reported an error (pedalled during the coast, or the speed was too low)", now);
+      break;
+    default:
+      break;
+  }
+}
+
+void SpinDown::tick(uint32_t now) {
+  if ((state == State::STARTING) && (now - stateAt > ANSWER_TIMEOUT_MS)) {
+    fail("no answer from the trainer", now);
+  } else if (((state == State::SPEED_UP) || (state == State::COAST)) && (now - startedAt > PROCEDURE_TIMEOUT_MS)) {
+    fail("timed out after 2 minutes", now);
+  } else if (((state == State::SUCCESS) || (state == State::FAILED)) && (now - stateAt > RESULT_SHOWN_MS)) {
+    state = State::IDLE;
+    message = "";
+  }
+}
+
+void SpinDown::cancel(uint32_t now) {
+  if (active()) fail("cancelled", now);
+}
+
+const char* SpinDown::getStateName() const {
+  static const char* const names[] = {"idle", "starting", "speed_up", "coast", "success", "failed"};
+  return names[(uint8_t)state < 6 ? (uint8_t)state : 0];
+}
+
 std::string toHex(const uint8_t* data, size_t length) {
   static const char digits[] = "0123456789ABCDEF";
   std::string text;

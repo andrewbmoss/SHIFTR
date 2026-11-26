@@ -98,9 +98,14 @@ trainer's power unless *Power to Zwift* says otherwise (below).
     doesn't jump);
   - for ERG and target-power modes: the trainer is asked for target ÷ factor, so the
     *power meter* shows what Zwift asks for.
+- **Spindown from the status page** (trainers that support FTMS spin down, like the Saris H1):
+  *Spindown* asks the trainer for its speed range, tells you to speed up, then to stop
+  pedalling, and reports the result. While it runs, Zwift's grade/ERG updates are held back;
+  afterwards they resume and the trainer factor is relearned. Do it after a 10-minute
+  warm-up, not in the middle of a race.
 - **Spindown warning:** when the learned factor is more than 4 % from the expected one
-  (after at least 2 minutes of evidence), the status page says so and offers
-  **Release trainer**: the bridge lets go of the trainer (and stops searching) so the Saris
+  (after at least 2 minutes of evidence), the status page says so and offers *Spindown*
+  (above) or **Release trainer**: the bridge lets go of the trainer (and stops searching) so the Saris
   app can connect for a spindown, while Zwift keeps getting the power meter. **Reconnect
   trainer** takes it back and relearns the factor. No unplugging (which risks the
   WT32-ETH01's cold-start quirk).

@@ -4,6 +4,7 @@
 #include <SettingsManager.h>
 #include <TrainerControl.h>
 #include <Telemetry.h>
+#include <PowerOutput.h>
 #include <UUIDs.h>
 
 using namespace TrainerProtocol;
@@ -44,6 +45,10 @@ static volatile uint32_t ibdPowerAt = 0;     // last non-zero power from FTMS In
 static volatile uint32_t ibdCadenceAt = 0;   // last non-zero cadence from FTMS Indoor Bike Data
 static CrankCadence cyclingPowerCadence;
 static bool startSent = false;
+// spin down (FTMS): touched by the main loop, the NimBLE task and HTTP handlers, guarded by `lock`
+static SpinDown spinDown;
+static bool spinDownSendPending = false;
+static bool spinDownWasActive = false;
 static uint32_t lastSummaryAt = 0;
 static const uint32_t SOURCE_TIMEOUT = 3000;
 static const uint32_t RAW_DUMP_PACKETS = 3;
@@ -127,6 +132,8 @@ void TrainerControl::onConnected(bool hasFTMS, bool hasFEC) {
 void TrainerControl::onDisconnected() {
   Telemetry::event(TelemetryEvent::TRAINER_DISCONNECTED, "");
   portENTER_CRITICAL(&lock);
+  spinDown.cancel(millis());
+  spinDownSendPending = false;
   protocol = TrainerProtocolType::NONE;
   controlGranted = false;
   controlRequestPending = false;
@@ -212,6 +219,47 @@ void TrainerControl::update() {
       userConfigurationDirty = false;
       sendFEC(fecUserConfiguration(userBicycleWeightKg, userWeightKg, Calculations::wheelDiameter, userGearRatio));
     }
+  }
+
+  // spin down: nothing else may reach the trainer while it runs (a grade or ERG update would
+  // end the procedure). Afterwards the last command and Start/Resume go out again.
+  bool sendSpinDownStart = false;
+  bool spinDownActive;
+  SpinDown::State spinDownState;
+  portENTER_CRITICAL(&lock);
+  spinDown.tick(now);
+  spinDownActive = spinDown.active();
+  spinDownState = spinDown.getState();
+  if (spinDownSendPending) {
+    spinDownSendPending = false;
+    sendSpinDownStart = true;
+  }
+  portEXIT_CRITICAL(&lock);
+  if (sendSpinDownStart) {
+    log_i("Starting FTMS spin down");
+    if (!sendFTMS(ftmsSpinDownControl(FTMS_SPIN_DOWN_START))) {
+      portENTER_CRITICAL(&lock);
+      spinDown.cancel(now);
+      portEXIT_CRITICAL(&lock);
+      Telemetry::event(TelemetryEvent::SPINDOWN, "start command couldn't be written");
+    }
+    return;
+  }
+  if (spinDownActive) {
+    spinDownWasActive = true;
+    return;
+  }
+  if (spinDownWasActive) {
+    spinDownWasActive = false;
+    Telemetry::eventf(TelemetryEvent::SPINDOWN, "%s: %s", spinDown.getStateName(), spinDown.getMessage());
+    if (spinDownState == SpinDown::State::SUCCESS) {
+      // the trainer's calibration changed: relearn its factor against the power meter
+      PowerOutput::onTrainerRecalibrated();
+    }
+    portENTER_CRITICAL(&lock);
+    startSent = false;
+    commandDirty = (pendingCommand.type != CommandType::NONE);
+    portEXIT_CRITICAL(&lock);
   }
 
   Command command;
@@ -380,6 +428,14 @@ void TrainerControl::onNotify(const NimBLEUUID& characteristicUUID, const uint8_
   } else if (characteristicUUID.equals(NimBLEUUID(FITNESS_MACHINE_CONTROL_POINT_CHARACTERISTIC_UUID))) {
     handleControlPointResponse(data, length);
   } else if (characteristicUUID.equals(NimBLEUUID(FITNESS_MACHINE_STATUS_CHARACTERISTIC_UUID))) {
+    if ((length >= 2) && (data[0] == FTMS_STATUS_SPIN_DOWN)) {
+      portENTER_CRITICAL(&lock);
+      spinDown.onStatus(data[1], now);
+      portEXIT_CRITICAL(&lock);
+      static const char* const names[] = {"?", "requested by trainer", "success", "error", "stop pedalling"};
+      Telemetry::eventf(TelemetryEvent::SPINDOWN, "status: %s", names[data[1] < 5 ? data[1] : 0]);
+      return;
+    }
     if ((length > 0) && ((data[0] == FTMS_STATUS_CONTROL_PERMISSION_LOST) || (data[0] == FTMS_STATUS_RESET))) {
       log_w("FTMS control lost (status 0x%02X), will request it again", data[0]);
       Telemetry::eventf(TelemetryEvent::CONTROL_LOST, "status 0x%02X", data[0]);
@@ -396,6 +452,17 @@ void TrainerControl::onNotify(const NimBLEUUID& characteristicUUID, const uint8_
 void TrainerControl::handleControlPointResponse(const uint8_t* data, size_t length) {
   ControlPointResponse response;
   if (!parseControlPointResponse(data, length, response)) {
+    return;
+  }
+  if (response.requestOpCode == FTMS_SPIN_DOWN_CONTROL) {
+    uint8_t result = 0;
+    double low = 0, high = 0;
+    parseSpinDownResponse(data, length, result, low, high);
+    portENTER_CRITICAL(&lock);
+    spinDown.onResponse(result, low, high, millis());
+    portEXIT_CRITICAL(&lock);
+    log_i("Spin down response: result %d, target %.1f-%.1f km/h", result, low, high);
+    Telemetry::eventf(TelemetryEvent::SPINDOWN, "response %d; target %.1f-%.1f km/h", result, low, high);
     return;
   }
   if (response.requestOpCode == FTMS_REQUEST_CONTROL) {
@@ -532,5 +599,48 @@ TrainerControl::CommandSnapshot TrainerControl::getLastSentCommand() {
   snapshot.value1 = lastSentCommand.value1;
   snapshot.value3 = lastSentCommand.value3;
   portEXIT_CRITICAL(&lock);
+  return snapshot;
+}
+
+// ---------------------------------------------------------------------------
+// Spin down
+// ---------------------------------------------------------------------------
+
+String TrainerControl::startSpinDown() {
+  if (!BTDeviceManager::isConnected()) return "the trainer isn't connected";
+  if (protocol != TrainerProtocolType::FTMS) return "only possible over FTMS";
+  if (!supportsSpinDown()) return "this trainer doesn't support spin down over FTMS; use its own app";
+  if (!controlGranted) return "the bridge doesn't have control of the trainer yet; try again in a few seconds";
+  portENTER_CRITICAL(&lock);
+  bool running = spinDown.active();
+  if (!running) {
+    spinDown.start(millis());
+    spinDownSendPending = true;
+  }
+  portEXIT_CRITICAL(&lock);
+  if (running) return "a spin down is already running";
+  Telemetry::event(TelemetryEvent::SPINDOWN, "started from the status page");
+  return "";
+}
+
+void TrainerControl::cancelSpinDown() {
+  portENTER_CRITICAL(&lock);
+  spinDown.cancel(millis());
+  spinDownSendPending = false;
+  portEXIT_CRITICAL(&lock);
+}
+
+TrainerControl::SpinDownSnapshot TrainerControl::getSpinDown() {
+  SpinDownSnapshot snapshot;
+  const char* message;
+  portENTER_CRITICAL(&lock);
+  snapshot.state = spinDown.getStateName();
+  message = spinDown.getMessage();
+  snapshot.targetLowKph = spinDown.getTargetLowKph();
+  snapshot.targetHighKph = spinDown.getTargetHighKph();
+  snapshot.requestedByTrainer = spinDown.wasRequestedByTrainer();
+  portEXIT_CRITICAL(&lock);
+  snapshot.message = message;
+  snapshot.supported = (protocol == TrainerProtocolType::FTMS) && supportsSpinDown();
   return snapshot;
 }

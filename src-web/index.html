@@ -126,6 +126,51 @@
 
 
 
+
+    function startSpinDown() {
+        fetch('/trainer/spindown', { method: 'POST' }).then(r => r.json()).then(result => {
+            if (!result.started) {
+                document.getElementById('spindown_box').style.display = '';
+                document.getElementById('spindown_box').innerHTML = '<b>Spindown not started:</b> ' + result.error;
+            }
+            updateLive();
+        }).catch(() => {});
+    }
+
+    function cancelSpinDown() {
+        fetch('/trainer/spindown/cancel', { method: 'POST' }).then(() => updateLive()).catch(() => {});
+    }
+
+    function updateSpinDown(live) {
+        let box = document.getElementById('spindown_box');
+        let row = document.getElementById('spindown_row');
+        row.style.display = live.sd_supported && ['idle', 'success', 'failed'].includes(live.sd_state) ? '' : 'none';
+        let cancel = ' <button class="btn" onclick="cancelSpinDown()"><label>Cancel</label></button>';
+        let speed = live.speed_kph.toFixed(1) + ' km/h';
+        let html = '';
+        switch (live.sd_state) {
+            case 'starting':
+                html = '<b>Spindown:</b> asking the trainer…' + cancel;
+                break;
+            case 'speed_up':
+                html = '<b>Spindown, step 1 of 2: speed up.</b> Pedal steadily up to '
+                    + (live.sd_high > 0 ? 'about <b>' + Math.ceil(live.sd_high) + ' km/h</b> (trainer speed, target ' + live.sd_low.toFixed(0) + '–' + live.sd_high.toFixed(0) + ')' : 'a brisk pace')
+                    + ' and hold it until told to stop. <br>Now: <b>' + speed + '</b>.' + cancel;
+                break;
+            case 'coast':
+                html = '<b>Spindown, step 2 of 2: stop pedalling.</b> Let the flywheel coast to a stop; keep your feet still. <br>Now: <b>' + speed + '</b>.' + cancel;
+                break;
+            case 'success':
+                html = '<b>Spindown done.</b> The trainer is recalibrated; the trainer factor is being relearned.';
+                break;
+            case 'failed':
+                html = '<b>Spindown failed:</b> ' + live.sd_message + '. You can try again.';
+                break;
+        }
+        box.style.display = html ? '' : 'none';
+        if (html) box.innerHTML = html;
+    }
+
     function trainerAction(path) {
         fetch(path, { method: 'POST' }).then(r => r.json()).then(() => updateLive()).catch(() => {});
     }
@@ -154,7 +199,12 @@
             banner.style.display = '';
             banner.innerHTML = '<b>Spindown advised.</b> The trainer reads ' + Math.abs(live.drift).toFixed(1) + ' % ' + (live.drift < 0 ? 'high' : 'low')
                 + ' against the power meter. Zwift is unaffected while the power meter is connected. '
-                + '<button class="btn" onclick="trainerAction(\'/trainer/release\')"><label>Release trainer</label></button>';
+                + (live.sd_supported ? '<button class="btn" onclick="startSpinDown()"><label>Spindown</label></button> or ' : '')
+                + '<button class="btn" onclick="trainerAction(\'/trainer/release\')"><label>Release trainer</label></button>'
+                + (live.sd_supported ? ' <small>(to use the Saris app instead)</small>' : '');
+        } else if (live.sd_requested && live.sd_supported) {
+            banner.style.display = '';
+            banner.innerHTML = '<b>The trainer asks for a spindown.</b> <button class="btn" onclick="startSpinDown()"><label>Spindown</label></button>';
         } else {
             banner.style.display = 'none';
         }
@@ -200,6 +250,7 @@
                 updateCalibration(live);
                 updatePowerMeter(live);
                 updateOutput(live);
+                updateSpinDown(live);
                 setText('live_cadence', live.cadence + ' rpm <small>(' + live.cadence_source + ')</small>');
                 setText('live_speed', live.speed_kph.toFixed(1) + ' km/h');
                 setText('live_zwift', live.zwift_clients > 0 ? (live.zwift_mode + ', ' + live.zwift_clients + ' connection(s)') : 'Not connected');
@@ -251,6 +302,9 @@
                 <div class="form-control"><label>To Zwift:</label><span id="live_out"></span></div>
                 <div class="form-control"><label>Trainer power:</label><span id="live_power"></span></div>
                 <div class="form-control"><label>Trainer factor:</label><span id="live_factor"></span></div>
+                <div id="spindown_box" style="display: none; border: 2px solid #3a7bd5; border-radius: 6px; padding: 8px; margin: 6px 0; text-align: left"></div>
+                <div class="form-control" id="spindown_row" style="display: none"><label>Calibration:</label>
+                    <span><button class="btn" onclick="startSpinDown()"><label>Spindown</label></button></span></div>
                 <div class="form-control"><label>Power meter:</label><span id="live_pm"></span></div>
                 <div class="form-control"><label>Trainer ÷ meter (raw):</label><span id="live_ratio"></span></div>
                 <div class="form-control"><label>Cadence:</label><span id="live_cadence"></span></div>

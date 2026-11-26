@@ -29,6 +29,7 @@ enum class TelemetryEvent : uint8_t {
   LOGGER,
   POWER_METER,
   POWER_OUTPUT,
+  SPINDOWN,
   COUNT
 };
 

@@ -252,6 +252,25 @@ void PowerOutput::handleReset(WebServer& server) {
   handleSettingsGet(server);
 }
 
+void PowerOutput::onTrainerRecalibrated() {
+  calibrator.reset();
+  saveFactor(0);
+  Telemetry::event(TelemetryEvent::POWER_OUTPUT, "trainer spun down; relearning factor");
+}
+
+void PowerOutput::handleSpinDown(WebServer& server) {
+  if (!requireAuth(server)) return;
+  String error = TrainerControl::startSpinDown();
+  error.replace("\"", "'");
+  server.send(200, "application/json", String("{\"started\": ") + (error.length() ? "false" : "true") + ", \"error\": \"" + error + "\"}");
+}
+
+void PowerOutput::handleSpinDownCancel(WebServer& server) {
+  if (!requireAuth(server)) return;
+  TrainerControl::cancelSpinDown();
+  server.send(200, "application/json", "{\"ok\": true}");
+}
+
 void PowerOutput::handleRelease(WebServer& server) {
   if (!requireAuth(server)) return;
   BTDeviceManager::release();

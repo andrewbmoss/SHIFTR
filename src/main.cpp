@@ -125,6 +125,8 @@ void setup() {
   webServer.on("/power/reset", HTTP_POST, [] { PowerOutput::handleReset(webServer); });
   webServer.on("/trainer/release", HTTP_POST, [] { PowerOutput::handleRelease(webServer); });
   webServer.on("/trainer/resume", HTTP_POST, [] { PowerOutput::handleResume(webServer); });
+  webServer.on("/trainer/spindown", HTTP_POST, [] { PowerOutput::handleSpinDown(webServer); });
+  webServer.on("/trainer/spindown/cancel", HTTP_POST, [] { PowerOutput::handleSpinDownCancel(webServer); });
   webServer.on("/crash/dump", HTTP_GET, [] { CrashReport::handleDump(webServer); });
   webServer.on("/crash/clear", HTTP_POST, [] {
     if (!webServer.authenticate(SettingsManager::getUsername().c_str(), SettingsManager::getAPPassword().c_str())) {
@@ -715,8 +717,9 @@ void handleWebServerZwiftSnapshot() {
 
 // Live ride data for the status page, polled once per second
 void handleWebServerLive() {
-  char buffer[1600];
+  char buffer[1900];
   PowerMeterReading meter = PowerMeter::getReading();
+  TrainerControl::SpinDownSnapshot spinDown = TrainerControl::getSpinDown();
   const char* zwiftMode = "SIM";
   switch (DirConManager::getZwiftTrainerMode()) {
     case TrainerMode::SIM_MODE_VIRTUAL_SHIFTING:
@@ -741,7 +744,8 @@ void handleWebServerLive() {
            "\"zwift_grade\": %.2f, \"smoothed_grade\": %.2f, \"trainer_cw\": %.2f, \"residual_drag\": %.1f, \"trainer_command\": \"%s\", \"blocked_writes\": %lu, \"packets\": \"%s\", \"logger_age_ms\": %ld, "
            "\"pm_state\": \"%s\", \"pm_name\": \"%s\", \"pm_power\": %d, \"pm_cadence\": %.0f, \"pm_balance\": %.1f, \"pm_battery\": %d, \"pm_rssi\": %d, \"pm_age_ms\": %ld, "
            "\"out_mode\": \"%s\", \"out_power\": %d, \"out_cadence\": %.0f, \"out_source\": \"%s\", \"meter_scale\": %.3f, \"trainer_factor\": %.4f, "
-           "\"baseline_factor\": %.4f, \"drift\": %.2f, \"drift_warning\": %s, \"learned_s\": %lu, \"trainer_released\": %s}",
+           "\"baseline_factor\": %.4f, \"drift\": %.2f, \"drift_warning\": %s, \"learned_s\": %lu, \"trainer_released\": %s, "
+           "\"sd_state\": \"%s\", \"sd_message\": \"%s\", \"sd_low\": %.1f, \"sd_high\": %.1f, \"sd_supported\": %s, \"sd_requested\": %s}",
            BTDeviceManager::isConnected() ? "true" : "false",
            BTDeviceManager::getConnecedDeviceName().c_str(),
            TrainerControl::getProtocolName(),
@@ -775,7 +779,9 @@ void handleWebServerLive() {
            PowerOutput::getMode() == PowerCal::Mode::POWER_METER ? PowerOutput::getSourceName() : "trainer",
            PowerOutput::getMeterScale(), PowerOutput::getFactor(), PowerOutput::getBaselineFactor(), PowerOutput::getDriftPercent(),
            PowerOutput::getDriftWarning() ? "true" : "false", (unsigned long)PowerOutput::getLearnedSeconds(),
-           BTDeviceManager::isReleased() ? "true" : "false");
+           BTDeviceManager::isReleased() ? "true" : "false",
+           spinDown.state, spinDown.message.c_str(), spinDown.targetLowKph, spinDown.targetHighKph,
+           spinDown.supported ? "true" : "false", spinDown.requestedByTrainer ? "true" : "false");
   webServer.send(200, "application/json", buffer);
 }
 

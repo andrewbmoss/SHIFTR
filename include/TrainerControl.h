@@ -73,6 +73,18 @@ class TrainerControl {
   static CommandSnapshot getLastSentCommand();
   // from the FTMS Fitness Machine Feature characteristic, read at connect
   static bool supportsSpinDown();
+  // FTMS spin down: returns "" when started, otherwise why not
+  static String startSpinDown();
+  static void cancelSpinDown();
+  struct SpinDownSnapshot {
+    const char* state = "idle";  // idle, starting, speed_up, coast, success, failed
+    String message;
+    double targetLowKph = 0;
+    double targetHighKph = 0;
+    bool requestedByTrainer = false;
+    bool supported = false;
+  };
+  static SpinDownSnapshot getSpinDown();
   static uint32_t getTargetSettingFeatures();
 
  private:
