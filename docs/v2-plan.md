@@ -404,3 +404,26 @@ Fix:
 - one static scan callback object instead of a new one per scan start (small leak).
 
 v1.6.2 also gets the trainer reconnect client leak fix from v2 alpha.0.
+
+## KICKR CORE vs Quarq (2026-11-25, Red bike, KICKR spindown, `alpha.7`)
+
+Same workout; Power2Max bike not tested (no QR adapter). Karoo clock +3 s; Karoo vs bridge
+0.999–1.007.
+
+| Block | KICKR ÷ Quarq | Saris ÷ Quarq (Mon) | Saris ÷ Power2Max (Mon) |
+|---|---|---|---|
+| 160 W 70 / 95 rpm | 0.910 / 0.927 | 0.937 / 0.945 | 1.038 / 1.023 |
+| 205 W 70 / 95 rpm | 0.911 / 0.922 | 0.926 / 0.930 | 1.021 / 1.007 |
+| 250 W 70 / 95 rpm | 0.913 / 0.929 | 0.906 / 0.899 | 1.039 / 1.018 |
+| 205 W big ring lo / hi | 0.945 / 0.938 | 0.959 / 0.969 | 1.043 / 1.074 |
+| **Mean** | **0.924** | **0.934** | **1.033** |
+
+- Two trainers from different makers agree on the Quarq within about 1 %.
+- Drivetrain loss means a trainer should read 0.96–0.98 of crank power. Against that, the
+  Quarq reads about 4–7 % high and the Power2Max about 4–7 % low. The truth is most likely
+  between the two meters, about 5 % from each, if the trainers are right (each rated ±2 %).
+- The ratio rises with cadence and big ring on both trainers and against both meters, so it
+  is most likely drivetrain efficiency (lower chain tension at the same power), not a trainer
+  error. This replaces the earlier reading of the Saris speed trend.
+- Implication for phase 4: crank-equivalent power ≈ Power2Max × ~1.05 ≈ trainer ÷ ~0.97;
+  Quarq scale ≈ Power2Max × 1.10.
