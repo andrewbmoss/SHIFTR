@@ -427,3 +427,11 @@ Same workout; Power2Max bike not tested (no QR adapter). Karoo clock +3 s; Karoo
   error. This replaces the earlier reading of the Saris speed trend.
 - Implication for phase 4: crank-equivalent power ≈ Power2Max × ~1.05 ≈ trainer ÷ ~0.97;
   Quarq scale ≈ Power2Max × 1.10.
+
+Correction (2026-11-25): the Red bike's small ring is 37T, not 36T, so at the same cadence its
+flywheel ran about 2.8 % faster than the Power2Max bike's. Measured flywheel speeds per block
+differed by −2 % to +6 %, mostly from cadence. With the ratio's speed sensitivity (~0.0018 per
+km/h, both bikes and both trainers), matching the speeds moves Saris ÷ Quarq from 0.9339 to
+0.9332 and Quarq ÷ Power2Max from 1.1064 to 1.1072: no change to any conclusion. Power meters
+measure at the spider, so chainring size doesn't affect their reading; the KICKR session used
+only the Red bike.
