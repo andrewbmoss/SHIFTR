@@ -28,6 +28,7 @@ enum class TelemetryEvent : uint8_t {
   PROBE,
   LOGGER,
   POWER_METER,
+  POWER_OUTPUT,
   COUNT
 };
 

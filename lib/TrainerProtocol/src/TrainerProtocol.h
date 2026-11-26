@@ -170,6 +170,11 @@ struct FECData {
 // Parses a 13 byte FE-C over BLE message as notified on 6E40FEC2-...
 bool parseFECMessage(const uint8_t* data, size_t length, FECData& result);
 
+// Replace power (and cadence) in a trainer notification before it is forwarded to Zwift.
+// Fields that the packet doesn't carry are left alone. Returns false if the packet is too short.
+bool rewriteIndoorBikeData(uint8_t* data, size_t length, int16_t powerWatts, double cadenceRpm);
+bool rewriteCyclingPowerMeasurement(uint8_t* data, size_t length, int16_t powerWatts);
+
 // Hex dump for diagnostics, e.g. "44 00 28 0A"
 std::string toHex(const uint8_t* data, size_t length);
 

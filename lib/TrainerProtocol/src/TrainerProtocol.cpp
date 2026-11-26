@@ -277,6 +277,39 @@ void CrankCadence::reset() {
   cadence = 0;
 }
 
+bool rewriteIndoorBikeData(uint8_t* data, size_t length, int16_t powerWatts, double cadenceRpm) {
+  if ((data == nullptr) || (length < 2)) return false;
+  uint16_t flags = data[0] | (data[1] << 8);
+  size_t offset = 2;
+  if (!(flags & 0x0001)) offset += 2;  // instantaneous speed (present when "more data" is 0)
+  if (flags & 0x0002) offset += 2;     // average speed
+  if (flags & 0x0004) {                // instantaneous cadence, 0.5 rpm
+    if (offset + 2 > length) return false;
+    long value = lround(cadenceRpm * 2.0);
+    if (value < 0) value = 0;
+    if (value > 0xFFFF) value = 0xFFFF;
+    data[offset] = value & 0xFF;
+    data[offset + 1] = (value >> 8) & 0xFF;
+    offset += 2;
+  }
+  if (flags & 0x0008) offset += 2;  // average cadence
+  if (flags & 0x0010) offset += 3;  // total distance
+  if (flags & 0x0020) offset += 2;  // resistance level
+  if (flags & 0x0040) {             // instantaneous power
+    if (offset + 2 > length) return false;
+    data[offset] = (uint16_t)powerWatts & 0xFF;
+    data[offset + 1] = ((uint16_t)powerWatts >> 8) & 0xFF;
+  }
+  return true;
+}
+
+bool rewriteCyclingPowerMeasurement(uint8_t* data, size_t length, int16_t powerWatts) {
+  if ((data == nullptr) || (length < 4)) return false;
+  data[2] = (uint16_t)powerWatts & 0xFF;
+  data[3] = ((uint16_t)powerWatts >> 8) & 0xFF;
+  return true;
+}
+
 std::string toHex(const uint8_t* data, size_t length) {
   static const char digits[] = "0123456789ABCDEF";
   std::string text;

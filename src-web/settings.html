@@ -94,10 +94,37 @@
                 }
                 settingsContainer.style = '';
                 document.getElementById('pm_container').style = '';
+                document.getElementById('po_container').style = '';
+                loadPowerOutput();
                 save.disabled = true;
                 loadPowerMeter();
             })
 
+    }
+
+
+    // ---------- power to Zwift (stored separately, no reboot) ----------
+    function renderPowerOutput(po) {
+        document.getElementById('po_mode').value = po.mode;
+        document.getElementById('po_scale').value = po.meter_scale.toFixed(3);
+        document.getElementById('po_loss').value = po.chain_loss.toFixed(1);
+        document.getElementById('po_drift').value = po.drift_warn.toFixed(1);
+        document.getElementById('po_state').innerHTML = 'Now: ' + po.power + ' W from the ' + po.source + '. Trainer factor ' + po.factor.toFixed(4)
+            + ' (expected ' + po.baseline.toFixed(4) + ', drift ' + (po.drift >= 0 ? '+' : '') + po.drift.toFixed(1) + ' %), learned from '
+            + Math.round(po.learned_s / 60) + ' min' + (po.saved_factor > 0 ? ', saved ' + po.saved_factor.toFixed(4) : '')
+            + '. Spindown over Bluetooth (FTMS): ' + (po.spindown_supported ? 'supported' : 'not supported, use the Saris app') + '.';
+    }
+    function loadPowerOutput() {
+        fetch('/power/settings', { cache: 'no-store' }).then(r => r.json()).then(renderPowerOutput).catch(() => {});
+    }
+    function savePowerOutput() {
+        let body = 'mode=' + document.getElementById('po_mode').value + '&meter_scale=' + document.getElementById('po_scale').value
+            + '&chain_loss=' + document.getElementById('po_loss').value + '&drift_warn=' + document.getElementById('po_drift').value;
+        fetch('/power/settings', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: body })
+            .then(r => r.json()).then(po => { renderPowerOutput(po); document.getElementById('po_saved').innerHTML = 'Saved'; });
+    }
+    function resetPowerOutput() {
+        fetch('/power/reset', { method: 'POST' }).then(r => r.json()).then(renderPowerOutput);
     }
 
     // ---------- power meter pairing (stored separately, no reboot needed) ----------
@@ -259,6 +286,27 @@
                     </div>
                 </form>
             </div>
+        </div>
+    </div>
+
+    <div class="container" id="po_container" style="display: none">
+        <h1>Power to Zwift</h1>
+        <div class="form">
+            <div class="form-control"><label for="po_mode">Zwift gets:</label>
+                <select id="po_mode"><option value="power_meter">Power meter, trainer as fallback</option><option value="trainer">Trainer only (as v1)</option></select></div>
+            <div class="form-control"><label for="po_scale">Power meter scale:</label><input type="number" id="po_scale" min="0.8" max="1.25" step="0.001"></div>
+            <div class="form-control"><label for="po_loss">Chain loss:</label><input type="number" id="po_loss" min="0" max="10" step="0.1"><span>&nbsp;%</span></div>
+            <div class="form-control"><label for="po_drift">Spindown warning at:</label><input type="number" id="po_drift" min="1" max="20" step="0.5"><span>&nbsp;% drift</span></div>
+            <p style="font-size: 13px; opacity: 0.8; text-align: left">The power meter reading is multiplied by the scale (1.055 for this
+                Power2Max, from the Saris test). The bridge learns how the trainer relates to it during steady riding; if the meter drops
+                out, Zwift gets the trainer &times; that factor, and ERG targets are adjusted so the meter shows what Zwift asks for. Chain
+                loss sets the expected trainer factor; drift beyond the warning level means the trainer needs a spindown.</p>
+            <div id="po_state" style="font-size: 13px; text-align: left"></div>
+            <div class="button-container">
+                <button type="button" class="btn" onclick="savePowerOutput()"><label>Save</label></button>
+                <button type="button" class="btn" onclick="resetPowerOutput()"><label>Reset learning</label></button>
+            </div>
+            <div id="po_saved" style="font-size: 13px"></div>
         </div>
     </div>
 

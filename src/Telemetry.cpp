@@ -2,6 +2,7 @@
 #include <BTDeviceManager.h>
 #include <DirConManager.h>
 #include <PowerMeter.h>
+#include <PowerOutput.h>
 #include <TrainerControl.h>
 #include <Version.h>
 #include <esp_heap_caps.h>
@@ -55,6 +56,9 @@ struct Sample {
   uint32_t freeHeap;
   uint32_t minFreeHeap;
   uint32_t largestBlock;
+  uint16_t trainerFactor10000;  // crank-equivalent ÷ trainer, learned
+  int16_t drift100;             // learned factor vs chain-loss baseline, % x 100
+  uint8_t calibrationFlags;     // bit0 drift warning, bit1 trainer released
 };
 
 struct Event {
@@ -67,18 +71,19 @@ struct Event {
 
 const char* const EVENT_NAMES[] = {"boot", "marker", "trainer_connected", "trainer_disconnected", "control_granted", "control_refused",
                                    "control_lost", "command_failed", "zwift_connected", "zwift_disconnected", "mode", "shift",
-                                   "erg_target", "settings_saved", "probe", "logger", "power_meter"};
+                                   "erg_target", "settings_saved", "probe", "logger", "power_meter", "power_output"};
 static_assert(sizeof(EVENT_NAMES) / sizeof(EVENT_NAMES[0]) == (size_t)TelemetryEvent::COUNT, "event names");
 
 const char* const SAMPLE_COLUMNS =
     "seq,uptime_ms,tr_connected,tr_power,tr_cadence,tr_cadence_measured,tr_speed_kph,tr_rssi,tr_age_ms,tr_control,"
     "pkt_ftms,pkt_cps,pkt_fec,pm_connected,pm_power,pm_cadence,pm_balance,pm_rssi,pm_age_ms,pkt_pm,"
     "out_power,out_cadence,out_source,mode,zwift_clients,grade,smoothed_grade,gear,gear_ratio,erg_target,"
-    "model_power,drag_power,trainer_cw,residual_drag,cmd_type,cmd_value,cmd_cw,blocked_writes,free_heap,min_free_heap,largest_block";
+    "model_power,drag_power,trainer_cw,residual_drag,cmd_type,cmd_value,cmd_cw,blocked_writes,free_heap,min_free_heap,largest_block,"
+    "trainer_factor,drift_pct,drift_warning,trainer_released";
 const char* const EVENT_COLUMNS = "seq,uptime_ms,event,detail";
 const char* const MODE_NAMES[] = {"SIM", "SIM+VS", "ERG"};
 const char* const COMMAND_NAMES[] = {"none", "grade", "target_power", "resistance"};
-const char* const SOURCE_NAMES[] = {"trainer", "power_meter", "trainer_corrected"};
+const char* const SOURCE_NAMES[] = {"trainer", "power_meter", "trainer_corrected", "none"};
 
 Sample* samples = nullptr;
 Event* events = nullptr;
@@ -152,10 +157,19 @@ void takeSample(uint32_t now) {
   sample.packetsPm = meterDelta > 255 ? 255 : meterDelta;
   lastPowerMeterPackets = meter.packets;
 
-  // what Zwift receives: the trainer's values in v1 behaviour
-  sample.outputPower = sample.trainerPower;
-  sample.outputCadence10 = sample.trainerCadence10;
-  sample.outputSource = 0;
+  // what Zwift receives
+  if (PowerOutput::getMode() == PowerCal::Mode::TRAINER) {
+    sample.outputPower = sample.trainerPower;
+    sample.outputCadence10 = sample.trainerCadence10;
+    sample.outputSource = trainerConnected ? 0 : 3;
+  } else {
+    sample.outputPower = PowerOutput::getPower();
+    sample.outputCadence10 = clampTo<uint16_t>(PowerOutput::getCadence() * 10.0);
+    sample.outputSource = (uint8_t)PowerOutput::getSource();
+  }
+  sample.trainerFactor10000 = clampTo<uint16_t>(PowerOutput::getFactor() * 10000.0);
+  sample.drift100 = clampTo<int16_t>(PowerOutput::getDriftPercent() * 100.0);
+  sample.calibrationFlags = (PowerOutput::getDriftWarning() ? 1 : 0) | (BTDeviceManager::isReleased() ? 2 : 0);
 
   sample.mode = modeIndex();
   sample.zwiftClients = DirConManager::getConnectedClientCount();
@@ -196,17 +210,18 @@ int formatSample(char* buffer, size_t size, const Sample& s) {
                   "S,%lu,%lu,%u,%d,%.1f,%u,%.2f,%d,%u,%u,"
                   "%u,%u,%u,%u,%s,%s,%s,%s,%s,%u,"
                   "%d,%.1f,%s,%s,%u,%.2f,%.2f,%u,%.3f,%u,"
-                  "%d,%d,%.2f,%.1f,%s,%s,%.2f,%u,%lu,%lu,%lu\n",
+                  "%d,%d,%.2f,%.1f,%s,%s,%.2f,%u,%lu,%lu,%lu,"
+                  "%.4f,%.2f,%u,%u\n",
                   (unsigned long)s.seq, (unsigned long)s.uptimeMs, s.trainerFlags & 1, s.trainerPower, s.trainerCadence10 / 10.0,
                   (s.trainerFlags >> 1) & 1, s.trainerSpeed100 / 100.0, s.trainerRssi, s.trainerAgeMs, (s.trainerFlags >> 2) & 1,
                   s.packetsFtms, s.packetsCps, s.packetsFec, s.powerMeterConnected,
                   s.powerMeterConnected ? String(s.powerMeterPower).c_str() : "", s.powerMeterConnected ? String(s.powerMeterCadence10 / 10.0, 1).c_str() : "",
                   balance, s.powerMeterConnected ? String(s.powerMeterRssi).c_str() : "", s.powerMeterConnected ? String(s.powerMeterAgeMs).c_str() : "", s.packetsPm,
-                  s.outputPower, s.outputCadence10 / 10.0, SOURCE_NAMES[s.outputSource < 3 ? s.outputSource : 0], MODE_NAMES[s.mode < 3 ? s.mode : 0],
+                  s.outputPower, s.outputCadence10 / 10.0, SOURCE_NAMES[s.outputSource < 4 ? s.outputSource : 3], MODE_NAMES[s.mode < 3 ? s.mode : 0],
                   s.zwiftClients, s.grade100 / 100.0, s.smoothedGrade100 / 100.0, s.gear, s.gearRatio1000 / 1000.0, s.ergTarget,
                   s.modelPower, s.dragPower, s.trainerCw100 / 100.0, s.residualDrag10 / 10.0, COMMAND_NAMES[s.commandType < 4 ? s.commandType : 0],
                   commandValue, s.commandCw100 / 100.0, s.blockedWrites, (unsigned long)s.freeHeap, (unsigned long)s.minFreeHeap,
-                  (unsigned long)s.largestBlock);
+                  (unsigned long)s.largestBlock, s.trainerFactor10000 / 10000.0, s.drift100 / 100.0, s.calibrationFlags & 1, (s.calibrationFlags >> 1) & 1);
 }
 
 uint32_t parseSeq(WebServer& server, const char* name) {

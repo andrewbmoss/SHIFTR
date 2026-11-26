@@ -71,6 +71,9 @@ class TrainerControl {
     double value3 = 0;  // cw (simulation)
   };
   static CommandSnapshot getLastSentCommand();
+  // from the FTMS Fitness Machine Feature characteristic, read at connect
+  static bool supportsSpinDown();
+  static uint32_t getTargetSettingFeatures();
 
  private:
   enum class CommandType : uint8_t { NONE, SIMULATION, TARGET_POWER, RESISTANCE };
@@ -103,6 +106,8 @@ class TrainerControl {
   static double userWeightKg;
   static double userGearRatio;
   static bool resistanceRangeKnown;
+  static uint32_t machineFeatures;
+  static uint32_t targetSettingFeatures;
   static int16_t resistanceRangeMinimum;
   static int16_t resistanceRangeMaximum;
 

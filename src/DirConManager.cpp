@@ -3,6 +3,7 @@
 #include <Config.h>
 #include <DirConManager.h>
 #include <Telemetry.h>
+#include <PowerOutput.h>
 #include <ESPmDNS.h>
 #include <Service.h>
 #include <ServiceManagerCallbacks.h>
@@ -526,7 +527,7 @@ bool DirConManager::processZwiftSyncRequest(Service *service, Characteristic *ch
                 Telemetry::eventf(TelemetryEvent::ERG_TARGET, "%d W", (int)zwiftPower);
               }
             }
-            TrainerControl::setTargetPower(zwiftPower);
+            TrainerControl::setTargetPower(PowerOutput::trainerTargetFor(zwiftPower));
             break;
 
           // SIM/ERG Mode Inclination
@@ -666,6 +667,9 @@ void DirConManager::updateSIMModeResistance() {
       gearRatio = gearMapper.map(zwiftGearRatio / 10000.0);
     }
     uint8_t cadence = TrainerControl::getEffectiveCadence(defaultGearRatio);
+    if ((PowerOutput::getSource() == PowerCal::Source::POWER_METER) && (PowerOutput::getCadence() > 0)) {
+      cadence = (uint8_t)lround(PowerOutput::getCadence());
+    }
     if (TrainerControl::getMillisSinceLastData() > TRAINER_DATA_TIMEOUT) {
       // no power/cadence from the trainer: shifting would only change the gravity part of the
       // resistance (almost nothing on the flat), so assume a typical cadence instead
@@ -674,7 +678,7 @@ void DirConManager::updateSIMModeResistance() {
     modelPower = Calculations::calculateGearedPower(totalWeight, grade, cadence, gearRatio, defaultGearRatio, difficulty, zwiftCrr, zwiftCw);
 
     if (virtualShiftingMode == VirtualShiftingMode::TARGET_POWER) {
-      TrainerControl::setTargetPower(modelPower);
+      TrainerControl::setTargetPower(PowerOutput::trainerTargetFor(modelPower));
     } else if (virtualShiftingMode == VirtualShiftingMode::BASIC_RESISTANCE) {
       TrainerControl::setResistancePercent(Calculations::calculateGearedResistancePercentage(totalWeight, grade, cadence, gearRatio, defaultGearRatio, TrainerControl::getMaximumResistance(), difficulty, zwiftCrr, zwiftCw));
     } else {
@@ -698,6 +702,17 @@ bool DirConManager::isTrainerControlCharacteristic(const NimBLEUUID &characteris
 }
 
 void DirConManager::notifyDirConCharacteristic(const NimBLEUUID &characteristicUUID, uint8_t *pData, size_t length) {
+  // trainer power and cadence on their way to Zwift: replace them with the calibrated values
+  // (phase 0 showed Zwift reads power from Indoor Bike Data and Cycling Power as well as the
+  // Zwift protocol riding data)
+  if ((length > 0) && (length <= 64)) {
+    uint8_t copy[64];
+    memcpy(copy, pData, length);
+    if (PowerOutput::rewriteForZwift(characteristicUUID, copy, length)) {
+      notifyDirConCharacteristic(serviceManager->getCharacteristic(characteristicUUID), copy, length);
+      return;
+    }
+  }
   notifyDirConCharacteristic(serviceManager->getCharacteristic(characteristicUUID), pData, length);
 }
 
@@ -735,17 +750,28 @@ void DirConManager::sendDirConCharacteristicNotification(Characteristic *charact
   }
 }
 
+// power and cadence for Zwift: the calibrated output, or the trainer as in v1
+int64_t DirConManager::zwiftPowerOut() {
+  if (PowerOutput::getMode() == PowerCal::Mode::TRAINER) return TrainerControl::getPower();
+  return PowerOutput::getPower();
+}
+
+int64_t DirConManager::zwiftCadenceOut() {
+  if (PowerOutput::getMode() == PowerCal::Mode::TRAINER) return TrainerControl::getEffectiveCadence(defaultGearRatio);
+  return lround(PowerOutput::getCadence());
+}
+
 void DirConManager::notifyInternalCharacteristics() {
   for (Service *service : serviceManager->getServices()) {
     if (service->isInternal()) {
       for (Characteristic *characteristic : service->getCharacteristics()) {
         if (characteristic->getSubscriptions().size() > 0) {
           if (characteristic->UUID.equals(NimBLEUUID(ZWIFT_ASYNC_CHARACTERISTIC_UUID))) {
-            std::vector<uint8_t> notificationData = generateZwiftAsyncNotificationData(TrainerControl::getPower(), TrainerControl::getEffectiveCadence(defaultGearRatio), 0, 0, 0);
+            std::vector<uint8_t> notificationData = generateZwiftAsyncNotificationData(zwiftPowerOut(), zwiftCadenceOut(), 0, 0, 0);
             notifyDirConCharacteristic(characteristic, notificationData.data(), notificationData.size());
           }
           if (characteristic->UUID.equals(NimBLEUUID(INDOOR_BIKE_DATA_CHARACTERISTIC_UUID))) {
-            std::vector<uint8_t> notificationData = generateIndoorBikeDataNotificationData((uint16_t)(TrainerControl::getSpeedMps() * 360.0), (uint16_t)(TrainerControl::getEffectiveCadence(defaultGearRatio) * 2), (int16_t)TrainerControl::getPower());
+            std::vector<uint8_t> notificationData = generateIndoorBikeDataNotificationData((uint16_t)(TrainerControl::getSpeedMps() * 360.0), (uint16_t)(zwiftCadenceOut() * 2), (int16_t)zwiftPowerOut());
             notifyDirConCharacteristic(characteristic, notificationData.data(), notificationData.size());
           }
         }
@@ -887,7 +913,7 @@ std::vector<uint8_t> DirConManager::processFTMSWriteRequest(Service* service, Ch
             log_e("FTMS target power is negative, setting to 0");
             ftmsPower = 0;
           }
-          TrainerControl::setTargetPower(ftmsPower);
+          TrainerControl::setTargetPower(PowerOutput::trainerTargetFor(ftmsPower));
           success = true;
         } else {
           success = false;

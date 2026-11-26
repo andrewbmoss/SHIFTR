@@ -103,6 +103,8 @@ class DirConManager {
   static double residualDragForce;
   static double trainerDragPower;
   static double getFilteredGradePercent();
+  static int64_t zwiftPowerOut();
+  static int64_t zwiftCadenceOut();
 
   static bool zwiftProtocolActive;
   static uint32_t blockedPassthroughWrites;

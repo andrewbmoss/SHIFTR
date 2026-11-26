@@ -278,7 +278,33 @@ bool BTDeviceManager::connectRemoteDevice(NimBLEAdvertisedDevice* remoteDevice) 
   return true;
 }
 
+bool BTDeviceManager::released = false;
+
+void BTDeviceManager::release() {
+  log_i("Releasing the trainer");
+  released = true;
+  connectTimer.cancel();
+  stopScan();
+  if ((nimBLEClient != nullptr) && nimBLEClient->isConnected()) {
+    nimBLEClient->disconnect();
+  }
+  statusMessage = "Released";
+}
+
+void BTDeviceManager::resume() {
+  if (!released) return;
+  log_i("Taking the trainer back");
+  released = false;
+  startScan();
+}
+
+bool BTDeviceManager::isReleased() { return released; }
+
 void BTDeviceManager::startScan() {
+  if (released) {
+    scanTimer.cancel();
+    return;
+  }
   if (started) {
     connectTimer.cancel();
     scanTimer.every(BLE_SCAN_INTERVAL, BTDeviceManager::doScan);

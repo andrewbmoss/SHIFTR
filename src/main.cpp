@@ -19,6 +19,7 @@
 #include <SensorProbe.h>
 #include <Telemetry.h>
 #include <PowerMeter.h>
+#include <PowerOutput.h>
 #include <CrashReport.h>
 #include <esp_heap_caps.h>
 
@@ -72,6 +73,7 @@ void setup() {
   }
   log_i("Bluetooth device manager initialized");
   PowerMeter::begin();
+  PowerOutput::begin();
 
   // function button (short press: reconnect trainer, long press: reboot)
   pinMode(FUNCTION_BUTTON_PIN, INPUT_PULLUP);
@@ -118,6 +120,11 @@ void setup() {
   webServer.on("/log/marker", HTTP_POST, [] { Telemetry::handleMarker(webServer); });
   webServer.on("/powermeter", HTTP_GET, [] { PowerMeter::handleStatus(webServer); });
   webServer.on("/crash", HTTP_GET, [] { CrashReport::handleSummary(webServer); });
+  webServer.on("/power/settings", HTTP_GET, [] { PowerOutput::handleSettingsGet(webServer); });
+  webServer.on("/power/settings", HTTP_POST, [] { PowerOutput::handleSettingsPost(webServer); });
+  webServer.on("/power/reset", HTTP_POST, [] { PowerOutput::handleReset(webServer); });
+  webServer.on("/trainer/release", HTTP_POST, [] { PowerOutput::handleRelease(webServer); });
+  webServer.on("/trainer/resume", HTTP_POST, [] { PowerOutput::handleResume(webServer); });
   webServer.on("/crash/dump", HTTP_GET, [] { CrashReport::handleDump(webServer); });
   webServer.on("/crash/clear", HTTP_POST, [] {
     if (!webServer.authenticate(SettingsManager::getUsername().c_str(), SettingsManager::getAPPassword().c_str())) {
@@ -219,6 +226,7 @@ void setup() {
 }
 
 void loop() {
+  PowerOutput::update();
   Telemetry::update();
   BTDeviceManager::update();
   TrainerControl::update();
@@ -707,7 +715,7 @@ void handleWebServerZwiftSnapshot() {
 
 // Live ride data for the status page, polled once per second
 void handleWebServerLive() {
-  char buffer[1280];
+  char buffer[1600];
   PowerMeterReading meter = PowerMeter::getReading();
   const char* zwiftMode = "SIM";
   switch (DirConManager::getZwiftTrainerMode()) {
@@ -731,7 +739,9 @@ void handleWebServerLive() {
            "\"power\": %u, \"cadence\": %u, \"cadence_source\": \"%s\", \"speed_kph\": %.1f, \"data_age_ms\": %ld, "
            "\"zwift_clients\": %u, \"zwift_mode\": \"%s\", \"virtual_gear\": \"%s\", \"gear_ratio\": %.2f, \"model_power\": %.0f, \"drag_power\": %.0f, \"total_weight\": %.1f, \"trainer_weight\": %.1f, "
            "\"zwift_grade\": %.2f, \"smoothed_grade\": %.2f, \"trainer_cw\": %.2f, \"residual_drag\": %.1f, \"trainer_command\": \"%s\", \"blocked_writes\": %lu, \"packets\": \"%s\", \"logger_age_ms\": %ld, "
-           "\"pm_state\": \"%s\", \"pm_name\": \"%s\", \"pm_power\": %d, \"pm_cadence\": %.0f, \"pm_balance\": %.1f, \"pm_battery\": %d, \"pm_rssi\": %d, \"pm_age_ms\": %ld}",
+           "\"pm_state\": \"%s\", \"pm_name\": \"%s\", \"pm_power\": %d, \"pm_cadence\": %.0f, \"pm_balance\": %.1f, \"pm_battery\": %d, \"pm_rssi\": %d, \"pm_age_ms\": %ld, "
+           "\"out_mode\": \"%s\", \"out_power\": %d, \"out_cadence\": %.0f, \"out_source\": \"%s\", \"meter_scale\": %.3f, \"trainer_factor\": %.4f, "
+           "\"baseline_factor\": %.4f, \"drift\": %.2f, \"drift_warning\": %s, \"learned_s\": %lu, \"trainer_released\": %s}",
            BTDeviceManager::isConnected() ? "true" : "false",
            BTDeviceManager::getConnecedDeviceName().c_str(),
            TrainerControl::getProtocolName(),
@@ -758,7 +768,14 @@ void handleWebServerLive() {
            TrainerControl::getPacketSummary().c_str(),
            Telemetry::getMillisSinceLastFetch() == UINT32_MAX ? -1L : (long)Telemetry::getMillisSinceLastFetch(),
            PowerMeter::getStateName(), PowerMeter::getName().c_str(), meter.power, meter.cadence, meter.hasBalance ? meter.balanceLeft : -1.0,
-           meter.battery, meter.rssi, meter.ageMs == UINT32_MAX ? -1L : (long)meter.ageMs);
+           meter.battery, meter.rssi, meter.ageMs == UINT32_MAX ? -1L : (long)meter.ageMs,
+           PowerOutput::getMode() == PowerCal::Mode::POWER_METER ? "power_meter" : "trainer",
+           PowerOutput::getMode() == PowerCal::Mode::POWER_METER ? (int)PowerOutput::getPower() : (int)TrainerControl::getPower(),
+           PowerOutput::getMode() == PowerCal::Mode::POWER_METER ? PowerOutput::getCadence() : (double)TrainerControl::getEffectiveCadence(defaultGearRatio),
+           PowerOutput::getMode() == PowerCal::Mode::POWER_METER ? PowerOutput::getSourceName() : "trainer",
+           PowerOutput::getMeterScale(), PowerOutput::getFactor(), PowerOutput::getBaselineFactor(), PowerOutput::getDriftPercent(),
+           PowerOutput::getDriftWarning() ? "true" : "false", (unsigned long)PowerOutput::getLearnedSeconds(),
+           BTDeviceManager::isReleased() ? "true" : "false");
   webServer.send(200, "application/json", buffer);
 }
 

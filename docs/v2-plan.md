@@ -435,3 +435,28 @@ km/h, both bikes and both trainers), matching the speeds moves Saris ÷ Quarq fr
 0.9332 and Quarq ÷ Power2Max from 1.1064 to 1.1072: no change to any conclusion. Power meters
 measure at the spider, so chainring size doesn't affect their reading; the KICKR session used
 only the Red bike.
+
+## Phase 4: power to Zwift (`alpha.8`)
+
+- `lib/Calculations/src/PowerCalibrator.*` (pure, tested): corrected meter = meter × scale;
+  learned factor = EMA(crank) ÷ EMA(trainer) over steady samples (both fresh, > 60 W,
+  > 50 rpm, flywheel speed steps < 0.54 km/h for 6 s), running mean for the first samples then a
+  300 s time constant; prior = saved factor or 1/(1 − chain loss); drift warning after 120 s of
+  evidence beyond ±4 %, clears below 3 %. Output: meter when fresh, else trainer × factor.
+  ERG target ÷ factor.
+- `src/PowerOutput.cpp`: inputs at 1 Hz, NVS settings (`po_mode`, `po_scale` 1.055,
+  `po_loss` 3.0, `po_drift` 4.0, `po_factor`), events (`power_output`), endpoints
+  `/power/settings` (GET/POST), `/power/reset`, `/trainer/release`, `/trainer/resume`.
+- Zwift paths: Zwift async riding data and emulated IBD use the output; forwarded IBD (power
+  + cadence) and CPS (power) payloads are rewritten
+  (`TrainerProtocol::rewriteIndoorBikeData/rewriteCyclingPowerMeasurement`, tested).
+- ERG, FTMS-emulation target power and the target-power virtual shifting mode use
+  `trainerTargetFor()`. Virtual shifting uses the power meter's cadence when it is the source.
+- Trainer release: no scanning while released; the power meter may connect then; on resume
+  the learning resets (assumes a spindown happened).
+- FTMS Fitness Machine Feature read at connect; spin-down control (target setting bit 15)
+  reported in settings and as an event. A built-in spindown can follow if the Hammer has it.
+- Logger: new columns `trainer_factor, drift_pct, drift_warning, trainer_released`;
+  `out_source` can be `none`.
+- Replay of real rides through the calibrator: Monday's Power2Max test and the 11-24 race
+  gave no warnings; the learned factor stayed within ±3.1 % of the baseline.

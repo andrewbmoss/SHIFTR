@@ -125,6 +125,41 @@
     }
 
 
+
+    function trainerAction(path) {
+        fetch(path, { method: 'POST' }).then(r => r.json()).then(() => updateLive()).catch(() => {});
+    }
+
+    function updateOutput(live) {
+        let source = live.out_source;
+        let note = '';
+        if (live.out_mode == 'trainer') {
+            note = 'trainer, uncorrected (Settings &gt; Power to Zwift)';
+        } else if (source == 'power meter') {
+            note = 'Power2Max &times; ' + live.meter_scale.toFixed(3);
+        } else if (source == 'trainer (corrected)') {
+            note = '<b>power meter lost</b>: trainer &times; ' + live.trainer_factor.toFixed(3);
+        } else {
+            note = 'no power source';
+        }
+        setText('live_out', live.out_power + ' W &middot; ' + live.out_cadence + ' rpm <small>(' + note + ')</small>');
+        let learned = live.learned_s >= 30 ? 'learned from ' + Math.round(live.learned_s / 60) + ' min of steady riding' : 'not learned yet, using ' + (live.learned_s > 0 ? 'the start value' : 'the start value');
+        setText('live_factor', live.trainer_factor.toFixed(3) + ' <small>(expected ' + live.baseline_factor.toFixed(3) + ', drift ' + (live.drift >= 0 ? '+' : '') + live.drift.toFixed(1) + ' %; ' + learned + ')</small>');
+        let banner = document.getElementById('drift_banner');
+        if (live.trainer_released) {
+            banner.style.display = '';
+            banner.innerHTML = '<b>Trainer released.</b> Do the spindown in the Saris app now; Zwift keeps getting the power meter. Then: '
+                + '<button class="btn" onclick="trainerAction(\'/trainer/resume\')"><label>Reconnect trainer</label></button>';
+        } else if (live.drift_warning) {
+            banner.style.display = '';
+            banner.innerHTML = '<b>Spindown advised.</b> The trainer reads ' + Math.abs(live.drift).toFixed(1) + ' % ' + (live.drift < 0 ? 'high' : 'low')
+                + ' against the power meter. Zwift is unaffected while the power meter is connected. '
+                + '<button class="btn" onclick="trainerAction(\'/trainer/release\')"><label>Release trainer</label></button>';
+        } else {
+            banner.style.display = 'none';
+        }
+    }
+
     // trainer vs power meter, averaged over the last 30 s of pedalling above 50 W on both
     let pmWindow = [];
     function updatePowerMeter(live) {
@@ -164,6 +199,7 @@
                 setText('live_power_cal', live.power + ' W');
                 updateCalibration(live);
                 updatePowerMeter(live);
+                updateOutput(live);
                 setText('live_cadence', live.cadence + ' rpm <small>(' + live.cadence_source + ')</small>');
                 setText('live_speed', live.speed_kph.toFixed(1) + ' km/h');
                 setText('live_zwift', live.zwift_clients > 0 ? (live.zwift_mode + ', ' + live.zwift_clients + ' connection(s)') : 'Not connected');
@@ -211,9 +247,12 @@
         <div class="form">
             <div>
                 <div class="form-control"><label>Trainer:</label><span id="live_trainer"></span></div>
-                <div class="form-control"><label>Power:</label><span id="live_power"></span></div>
+                <div id="drift_banner" style="display: none; border: 2px solid #d08b00; border-radius: 6px; padding: 8px; margin: 6px 0; text-align: left"></div>
+                <div class="form-control"><label>To Zwift:</label><span id="live_out"></span></div>
+                <div class="form-control"><label>Trainer power:</label><span id="live_power"></span></div>
+                <div class="form-control"><label>Trainer factor:</label><span id="live_factor"></span></div>
                 <div class="form-control"><label>Power meter:</label><span id="live_pm"></span></div>
-                <div class="form-control"><label>Trainer ÷ meter:</label><span id="live_ratio"></span></div>
+                <div class="form-control"><label>Trainer ÷ meter (raw):</label><span id="live_ratio"></span></div>
                 <div class="form-control"><label>Cadence:</label><span id="live_cadence"></span></div>
                 <div class="form-control"><label>Speed:</label><span id="live_speed"></span></div>
                 <div class="form-control"><label>Zwift:</label><span id="live_zwift"></span></div>

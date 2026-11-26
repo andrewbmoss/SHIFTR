@@ -276,7 +276,7 @@ void meterTask(void*) {
       }
     } else if (paused) {
       state = PowerMeterState::PAUSED;
-    } else if (!BTDeviceManager::isConnected()) {
+    } else if (!BTDeviceManager::isConnected() && !BTDeviceManager::isReleased()) {
       state = PowerMeterState::WAITING_FOR_TRAINER;
     } else {
       state = PowerMeterState::SEARCHING;

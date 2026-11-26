@@ -31,6 +31,10 @@ class BTDeviceManager {
   static bool subscribeRemote(const NimBLEUUID& serviceUUID, const NimBLEUUID& characteristicUUID);
   static bool isPinned(const NimBLEUUID& characteristicUUID);
   static void forceReconnect();
+  // let go of the trainer so another app (Saris/Wahoo spindown) can connect; no scanning until resumed
+  static void release();
+  static void resume();
+  static bool isReleased();
   static std::vector<NimBLEAdvertisedDevice>* getScannedDevices();
   static String getStatusMessage();
 
@@ -43,6 +47,7 @@ class BTDeviceManager {
   static std::string connectedDeviceName;
   static bool connected;
   static bool started;
+  static bool released;
   static ServiceManager* serviceManager;
   static NimBLEClient* nimBLEClient;
   static std::vector<NimBLEUUID> remoteDeviceFilterUUIDs;

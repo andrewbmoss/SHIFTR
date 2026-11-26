@@ -5,6 +5,7 @@
 #include <Logger.h>
 #include <TrainerProtocol.h>
 #include <VirtualGears.h>
+#include <PowerCalibrator.h>
 #include <unity.h>
 
 #include <cmath>
@@ -452,6 +453,113 @@ void test_cps_feature_names(void) {
   TEST_ASSERT_EQUAL_STRING("pedal_balance, crank_revolutions, offset_compensation", text.c_str());
 }
 
+// ---------- power calibration (v2 phase 4) ----------
+static PowerCal::Input ride(double crank, double trainerShare, double meterScale, double speed = 30, bool meter = true, bool trainer = true) {
+  PowerCal::Input input;
+  input.trainerFresh = trainer;
+  input.trainerPower = crank * trainerShare;
+  input.trainerCadence = 85;
+  input.trainerSpeedKph = speed;
+  input.meterFresh = meter;
+  input.meterPower = crank / meterScale;
+  input.meterCadence = 85;
+  return input;
+}
+
+void test_calibrator_learns_chain_loss(void) {
+  PowerCal::Calibrator calibrator;
+  PowerCal::Config config;  // scale 1.055, 3 % loss
+  calibrator.configure(config);
+  TEST_ASSERT_DOUBLE_WITHIN(1e-6, 1.0 / 0.97, calibrator.factor());
+  PowerCal::Output output;
+  for (int second = 0; second < 600; second++) output = calibrator.update(ride(220, 0.97, 1.055));
+  TEST_ASSERT_EQUAL_INT((int)PowerCal::Source::POWER_METER, (int)output.source);
+  TEST_ASSERT_DOUBLE_WITHIN(0.01, 220, output.power);  // corrected meter = crank power
+  TEST_ASSERT_DOUBLE_WITHIN(0.002, 1.0 / 0.97, calibrator.factor());
+  TEST_ASSERT_DOUBLE_WITHIN(0.2, 0.0, calibrator.driftPercent());
+  TEST_ASSERT_FALSE(calibrator.driftWarning());
+}
+
+void test_calibrator_fallback_is_continuous(void) {
+  // the trainer reads 2 % high against the chain-loss expectation; after learning, losing the
+  // meter must not change the power Zwift sees
+  PowerCal::Calibrator calibrator;
+  calibrator.configure(PowerCal::Config());
+  PowerCal::Output output;
+  for (int second = 0; second < 900; second++) output = calibrator.update(ride(250, 0.97 * 1.02, 1.055));
+  double withMeter = output.power;
+  output = calibrator.update(ride(250, 0.97 * 1.02, 1.055, 30, false));
+  TEST_ASSERT_EQUAL_INT((int)PowerCal::Source::TRAINER_CORRECTED, (int)output.source);
+  TEST_ASSERT_DOUBLE_WITHIN(withMeter * 0.003, withMeter, output.power);
+}
+
+void test_calibrator_warns_on_drift(void) {
+  PowerCal::Calibrator calibrator;
+  calibrator.configure(PowerCal::Config());
+  // trainer reads 6 % high: learned factor 6 % below baseline
+  for (int second = 0; second < 100; second++) calibrator.update(ride(200, 0.97 * 1.06, 1.055));
+  TEST_ASSERT_FALSE(calibrator.driftWarning());  // not enough evidence yet
+  for (int second = 0; second < 900; second++) calibrator.update(ride(200, 0.97 * 1.06, 1.055));
+  TEST_ASSERT_TRUE(calibrator.driftPercent() < -5.0);
+  TEST_ASSERT_TRUE(calibrator.driftWarning());
+  // after a spindown the trainer is right again: reset, relearn, warning clears
+  calibrator.reset();
+  for (int second = 0; second < 900; second++) calibrator.update(ride(200, 0.97, 1.055));
+  TEST_ASSERT_FALSE(calibrator.driftWarning());
+  TEST_ASSERT_DOUBLE_WITHIN(0.3, 0.0, calibrator.driftPercent());
+}
+
+void test_calibrator_ignores_unsteady_riding(void) {
+  PowerCal::Calibrator calibrator;
+  calibrator.configure(PowerCal::Config());
+  // speed changes 1 km/h every second: flywheel inertia makes these samples misleading
+  for (int second = 0; second < 300; second++) calibrator.update(ride(200, 0.80, 1.055, 25 + (second % 10)));
+  TEST_ASSERT_EQUAL_UINT32(0, calibrator.learnedSeconds());
+  // coasting / low power doesn't count either
+  for (int second = 0; second < 300; second++) calibrator.update(ride(40, 0.80, 1.055));
+  TEST_ASSERT_EQUAL_UINT32(0, calibrator.learnedSeconds());
+}
+
+void test_calibrator_erg_target(void) {
+  PowerCal::Calibrator calibrator;
+  calibrator.configure(PowerCal::Config());
+  // trainer = 0.97 × crank: to get 200 W at the crank the trainer must hold 194 W
+  TEST_ASSERT_DOUBLE_WITHIN(0.01, 194.0, calibrator.trainerTargetFor(200));
+  PowerCal::Config trainerOnly;
+  trainerOnly.mode = PowerCal::Mode::TRAINER;
+  calibrator.configure(trainerOnly);
+  TEST_ASSERT_DOUBLE_WITHIN(1e-9, 200.0, calibrator.trainerTargetFor(200));
+  PowerCal::Output output = calibrator.update(ride(200, 0.97, 1.055));
+  TEST_ASSERT_EQUAL_INT((int)PowerCal::Source::TRAINER, (int)output.source);
+  TEST_ASSERT_DOUBLE_WITHIN(1e-9, 194.0, output.power);
+}
+
+void test_rewrite_indoor_bike_data(void) {
+  // flags 0x0044: speed (more data = 0), cadence, power. speed 3000, cadence 170 (85 rpm), power 200
+  uint8_t data[] = {0x44, 0x00, 0xB8, 0x0B, 0xAA, 0x00, 0xC8, 0x00};
+  TEST_ASSERT_TRUE(TrainerProtocol::rewriteIndoorBikeData(data, sizeof(data), 243, 91.5));
+  TrainerProtocol::IndoorBikeData parsed;
+  TEST_ASSERT_TRUE(TrainerProtocol::parseIndoorBikeData(data, sizeof(data), parsed));
+  TEST_ASSERT_EQUAL_INT(243, parsed.powerWatts);
+  TEST_ASSERT_DOUBLE_WITHIN(1e-9, 91.5, parsed.cadenceRpm);
+  TEST_ASSERT_DOUBLE_WITHIN(1e-9, 30.0, parsed.speedKph);
+  // with resistance level between cadence and power
+  uint8_t withResistance[] = {0x64, 0x00, 0xB8, 0x0B, 0xAA, 0x00, 0x10, 0x00, 0xC8, 0x00};
+  TEST_ASSERT_TRUE(TrainerProtocol::rewriteIndoorBikeData(withResistance, sizeof(withResistance), 301, 80));
+  TEST_ASSERT_TRUE(TrainerProtocol::parseIndoorBikeData(withResistance, sizeof(withResistance), parsed));
+  TEST_ASSERT_EQUAL_INT(301, parsed.powerWatts);
+  TEST_ASSERT_EQUAL_UINT8(0x10, withResistance[6]);
+}
+
+void test_rewrite_cycling_power(void) {
+  uint8_t data[] = {0x20, 0x00, 0xC8, 0x00, 0x10, 0x00, 0x00, 0x04};
+  TEST_ASSERT_TRUE(TrainerProtocol::rewriteCyclingPowerMeasurement(data, sizeof(data), 243));
+  TrainerProtocol::CyclingPowerData parsed;
+  TEST_ASSERT_TRUE(TrainerProtocol::parseCyclingPowerMeasurement(data, sizeof(data), parsed));
+  TEST_ASSERT_EQUAL_INT(243, parsed.powerWatts);
+  TEST_ASSERT_EQUAL_UINT16(16, parsed.crankRevolutions);
+}
+
 int main(int argc, char** argv) {
   Logger::defaultLogLevel = LOG_LEVEL_ERROR;
   UNITY_BEGIN();
@@ -481,6 +589,13 @@ int main(int argc, char** argv) {
   RUN_TEST(test_downhill_harder_gear_needs_less);
   RUN_TEST(test_trainer_weight_conversion);
   RUN_TEST(test_wind_coefficient_units);
+  RUN_TEST(test_calibrator_learns_chain_loss);
+  RUN_TEST(test_calibrator_fallback_is_continuous);
+  RUN_TEST(test_calibrator_warns_on_drift);
+  RUN_TEST(test_calibrator_ignores_unsteady_riding);
+  RUN_TEST(test_calibrator_erg_target);
+  RUN_TEST(test_rewrite_indoor_bike_data);
+  RUN_TEST(test_rewrite_cycling_power);
   RUN_TEST(test_cps_full_measurement);
   RUN_TEST(test_cps_truncated_keeps_power);
   RUN_TEST(test_cps_feature_names);

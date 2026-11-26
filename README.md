@@ -49,6 +49,14 @@ version are in [CHANGELOG.md](CHANGELOG.md).
   units, and grade calculation could produce NaN at extreme gears.
 - Uses the maintained `esp32async/AsyncTCP` fork, and all library versions are pinned.
 
+## Troubleshooting: no network after plugging the power in
+
+The WT32-ETH01 shares GPIO0 between the Ethernet clock and the ESP32's boot mode, so on a
+cold power-on it sometimes starts in download mode: Ethernet lights on, but no web page
+and no Wi-Fi access point. Press **RESET**. Restarts after updates or settings changes
+aren't affected. To avoid cold starts during a spindown, use *Release trainer* on the
+status page instead of unplugging the bridge.
+
 ## Logging to the PC (v2)
 
 Open `http://<bridge>/logger` in Chrome or Edge on the Zwift PC and click
@@ -72,7 +80,36 @@ Columns: see `docs/v2-plan.md`, "Phase 1".
 trainer connected, turn the cranks until the meter's LED blinks, *Find power meters*,
 *Use*. The bridge then connects to it whenever it's awake, next to the trainer, and shows
 its power, cadence and balance on the status page and in the log. Zwift still gets the
-trainer's power for now.
+trainer's power unless *Power to Zwift* says otherwise (below).
+
+### Power to Zwift (v2)
+
+*Settings > Power to Zwift*, saved without a reboot:
+
+- **Zwift gets:** *Power meter, trainer as fallback* (default) or *Trainer only* (v1).
+- **Power meter scale:** the meter's reading is multiplied by this. 1.055 for the
+  Power2Max NG here: the Saris test showed it about 5.5 % below crank power.
+- **Chain loss** (default 3 %) sets the expected trainer factor, 1 / (1 − loss) = 1.031.
+- **Learned trainer factor:** during steady pedalling (both readings fresh, over 60 W and
+  50 rpm, flywheel speed changing less than 0.15 m/s per second) the bridge learns
+  crank power ÷ trainer power with a 5-minute time constant, saves it every 10 minutes
+  when it changes, and uses it:
+  - as the fallback when the power meter drops out (trainer × factor, so Zwift's power
+    doesn't jump);
+  - for ERG and target-power modes: the trainer is asked for target ÷ factor, so the
+    *power meter* shows what Zwift asks for.
+- **Spindown warning:** when the learned factor is more than 4 % from the expected one
+  (after at least 2 minutes of evidence), the status page says so and offers
+  **Release trainer**: the bridge lets go of the trainer (and stops searching) so the Saris
+  app can connect for a spindown, while Zwift keeps getting the power meter. **Reconnect
+  trainer** takes it back and relearns the factor. No unplugging (which risks the
+  WT32-ETH01's cold-start quirk).
+- Every trainer and Cycling Power notification forwarded to Zwift has its power (and
+  cadence) replaced, as well as the bridge's own Zwift-protocol riding data.
+
+The scale and chain loss were measured with the chain on the small ring. With the chain on
+the big ring, chain losses are smaller and the factor sits 2–4 % lower; click *Reset
+learning* after moving the chain.
 
 ## Virtual shifting feel (v1.5, v1.6)
 

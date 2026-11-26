@@ -22,6 +22,8 @@ double TrainerControl::userBicycleWeightKg = 10;
 double TrainerControl::userWeightKg = 75;
 double TrainerControl::userGearRatio = 34.0 / 14.0;
 bool TrainerControl::resistanceRangeKnown = false;
+uint32_t TrainerControl::machineFeatures = 0;
+uint32_t TrainerControl::targetSettingFeatures = 0;
 int16_t TrainerControl::resistanceRangeMinimum = 0;
 int16_t TrainerControl::resistanceRangeMaximum = 0;
 
@@ -83,6 +85,16 @@ void TrainerControl::onConnected(bool hasFTMS, bool hasFEC) {
       resistanceRangeMinimum = parsedRange.minimum;
       resistanceRangeMaximum = parsedRange.maximum;
       log_i("FTMS resistance level range: %d..%d (0.1 units)", parsedRange.minimum, parsedRange.maximum);
+    }
+    // target setting features (second UINT32 of 0x2ACC): bit 15 = spin down control
+    std::vector<uint8_t> features = BTDeviceManager::readBLECharacteristic(NimBLEUUID(FITNESS_MACHINE_SERVICE_UUID), NimBLEUUID(FITNESS_MACHINE_FEATURE_CHARACTERISTIC_UUID));
+    if (features.size() >= 8) {
+      machineFeatures = features[0] | (features[1] << 8) | (features[2] << 16) | ((uint32_t)features[3] << 24);
+      targetSettingFeatures = features[4] | (features[5] << 8) | (features[6] << 16) | ((uint32_t)features[7] << 24);
+      log_i("FTMS features 0x%08lx, target settings 0x%08lx, spin down %s", (unsigned long)machineFeatures, (unsigned long)targetSettingFeatures,
+            (targetSettingFeatures & (1u << 15)) ? "supported" : "not supported");
+      Telemetry::eventf(TelemetryEvent::TRAINER_CONNECTED, "targets 0x%08lx spindown %s", (unsigned long)targetSettingFeatures,
+                        (targetSettingFeatures & (1u << 15)) ? "yes" : "no");
     }
   } else if (selected == TrainerProtocolType::FEC) {
     BTDeviceManager::subscribeRemote(NimBLEUUID(TACX_FEC_PRIMARY_SERVICE_UUID), NimBLEUUID(TACX_FEC_READ_CHARACTERISTIC_UUID));
@@ -503,6 +515,9 @@ String TrainerControl::getPacketSummary() {
            (unsigned long)packetsIndoorBikeData, (unsigned long)packetsCyclingPower, (unsigned long)packetsFEC);
   return String(buffer);
 }
+
+bool TrainerControl::supportsSpinDown() { return (targetSettingFeatures & (1u << 15)) != 0; }
+uint32_t TrainerControl::getTargetSettingFeatures() { return targetSettingFeatures; }
 
 void TrainerControl::getPacketCounts(uint32_t& indoorBikeData, uint32_t& cyclingPower, uint32_t& fec) {
   indoorBikeData = packetsIndoorBikeData;
