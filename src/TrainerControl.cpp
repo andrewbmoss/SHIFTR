@@ -457,9 +457,17 @@ void TrainerControl::handleControlPointResponse(const uint8_t* data, size_t leng
   if (response.requestOpCode == FTMS_SPIN_DOWN_CONTROL) {
     uint8_t result = 0;
     double low = 0, high = 0;
-    parseSpinDownResponse(data, length, result, low, high);
+    if (!parseSpinDownResponse(data, length, result, low, high)) {
+      return;
+    }
     portENTER_CRITICAL(&lock);
     spinDown.onResponse(result, low, high, millis());
+    if (result == FTMS_RESULT_CONTROL_NOT_PERMITTED) {
+      // like any other refused command: control has to be requested again
+      controlGranted = false;
+      controlRequestPending = false;
+      commandDirty = (pendingCommand.type != CommandType::NONE);
+    }
     portEXIT_CRITICAL(&lock);
     log_i("Spin down response: result %d, target %.1f-%.1f km/h", result, low, high);
     Telemetry::eventf(TelemetryEvent::SPINDOWN, "response %d; target %.1f-%.1f km/h", result, low, high);
@@ -621,6 +629,13 @@ String TrainerControl::startSpinDown() {
   if (running) return "a spin down is already running";
   Telemetry::event(TelemetryEvent::SPINDOWN, "started from the status page");
   return "";
+}
+
+bool TrainerControl::isSpinDownActive() {
+  portENTER_CRITICAL(&lock);
+  bool active = spinDown.active();
+  portEXIT_CRITICAL(&lock);
+  return active;
 }
 
 void TrainerControl::cancelSpinDown() {

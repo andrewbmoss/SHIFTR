@@ -136,7 +136,7 @@ void runScan() {
   std::vector<Found> results;
   String error;
   NimBLEScan* scan = NimBLEDevice::getScan();
-  if (!BTDeviceManager::isConnected() || scan->isScanning()) {
+  if (!BTDeviceManager::isTrainerReady() || scan->isScanning()) {
     error = "Connect the trainer first (while it's searching, Bluetooth is busy)";
   } else {
     radioBusy = true;
@@ -159,10 +159,11 @@ void runScan() {
     radioBusy = false;
     if (results.empty()) error = "No power meter found. Spin the cranks backwards until the LED blinks, then search again within a minute.";
   }
-  portENTER_CRITICAL(&dataLock);
-  found = results;
-  portEXIT_CRITICAL(&dataLock);
-  scanError = error;
+  {
+    std::lock_guard<std::mutex> guard(pairingMutex);
+    found.swap(results);
+    scanError = error;
+  }
   scanRunning = false;
 }
 
@@ -172,7 +173,10 @@ bool connectOnce(const String& address, uint8_t type) {
     if (client == nullptr) return false;
     client->setClientCallbacks(&clientCallbacks, false);
     // the meter sends once a second; a relaxed interval leaves more airtime for the trainer
-    client->setConnectionParams(64, 96, 0, 400);
+    // the last two are the scan interval/window used while connecting (0.625 ms units). The
+    // defaults (16/16) listen continuously, which took airtime from the trainer for 5 s of
+    // every attempt; 60 ms / 30 ms still catches a 1 Hz advertiser within one attempt.
+    client->setConnectionParams(64, 96, 0, 400, 96, 48);
   }
   client->setConnectTimeout(CONNECT_TIMEOUT_S);
   radioBusy = true;
@@ -225,7 +229,10 @@ void meterTask(void*) {
       if (!(client != nullptr && client->isConnected())) {
         runScan();
       } else {
-        scanError = "Forget the connected meter first";
+        {
+          std::lock_guard<std::mutex> guard(pairingMutex);
+          scanError = "Forget the connected meter first";
+        }
         scanRunning = false;
       }
     }
@@ -276,7 +283,8 @@ void meterTask(void*) {
       }
     } else if (paused) {
       state = PowerMeterState::PAUSED;
-    } else if (!BTDeviceManager::isConnected() && !BTDeviceManager::isReleased()) {
+    } else if (!BTDeviceManager::isTrainerReady() && !BTDeviceManager::isReleased()) {
+      // wait until the trainer's connection and service discovery are complete
       state = PowerMeterState::WAITING_FOR_TRAINER;
     } else {
       state = PowerMeterState::SEARCHING;
@@ -356,10 +364,14 @@ void PowerMeter::handleStatus(WebServer& server) {
   PowerMeterReading reading = getReading();
   String json = "{\"state\": \"" + String(getStateName()) + "\", \"name\": \"" + getName() + "\", \"address\": \"" + getAddress() + "\"";
   json += ", \"battery\": " + String(reading.battery) + ", \"rssi\": " + String(reading.rssi);
-  json += ", \"scan_running\": " + String(scanRunning ? "true" : "false") + ", \"scan_error\": \"" + scanError + "\", \"found\": [";
-  portENTER_CRITICAL(&dataLock);
-  std::vector<Found> copy = found;
-  portEXIT_CRITICAL(&dataLock);
+  std::vector<Found> copy;
+  String error;
+  {
+    std::lock_guard<std::mutex> guard(pairingMutex);
+    copy = found;
+    error = scanError;
+  }
+  json += ", \"scan_running\": " + String(scanRunning ? "true" : "false") + ", \"scan_error\": \"" + error + "\", \"found\": [";
   for (size_t index = 0; index < copy.size(); index++) {
     if (index > 0) json += ",";
     json += "{\"address\": \"" + String(copy[index].address.c_str()) + "\", \"type\": " + String(copy[index].type) + ", \"name\": \"" + String(copy[index].name.c_str()) + "\", \"rssi\": " + String(copy[index].rssi) + "}";
@@ -373,10 +385,11 @@ void PowerMeter::handleScan(WebServer& server) {
     server.send(200, "application/json", "{\"started\": false, \"error\": \"already searching\"}");
     return;
   }
-  portENTER_CRITICAL(&dataLock);
-  found.clear();
-  portEXIT_CRITICAL(&dataLock);
-  scanError = "";
+  {
+    std::lock_guard<std::mutex> guard(pairingMutex);
+    found.clear();
+    scanError = "";
+  }
   scanRunning = true;  // until the task picks it up
   scanRequested = true;
   server.send(200, "application/json", "{\"started\": true}");

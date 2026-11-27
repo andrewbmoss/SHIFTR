@@ -35,6 +35,8 @@ class BTDeviceManager {
   static void release();
   static void resume();
   static bool isReleased();
+  // connected *and* service discovery/setup finished (connected is set earlier, in the connect callback)
+  static bool isTrainerReady();
   static std::vector<NimBLEAdvertisedDevice>* getScannedDevices();
   static String getStatusMessage();
 
@@ -48,6 +50,8 @@ class BTDeviceManager {
   static bool connected;
   static bool started;
   static bool released;
+  static volatile bool trainerReady;
+  static void handleScanEnd();
   static ServiceManager* serviceManager;
   static NimBLEClient* nimBLEClient;
   static std::vector<NimBLEUUID> remoteDeviceFilterUUIDs;

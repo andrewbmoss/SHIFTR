@@ -50,6 +50,8 @@ std::string BTDeviceManager::remoteDeviceName;
 std::string BTDeviceManager::connectedDeviceName;
 NimBLEClient* BTDeviceManager::nimBLEClient{};
 bool BTDeviceManager::connected = false;
+volatile bool BTDeviceManager::trainerReady = false;
+static volatile bool scanEndPending = false;
 bool BTDeviceManager::started = false;
 Timer<> BTDeviceManager::scanTimer = timer_create_default();
 Timer<> BTDeviceManager::connectTimer = timer_create_default();
@@ -113,12 +115,17 @@ void BTDeviceManager::stop() {
 }
 
 void BTDeviceManager::update() {
+  if (scanEndPending) {
+    scanEndPending = false;
+    if (!released) handleScanEnd();
+  }
   scanTimer.tick();
   connectTimer.tick();
   if (connected) {
     if (nimBLEClient != nullptr) {
       if (!nimBLEClient->isConnected()) {
         connected = false;
+        trainerReady = false;
         connectedDeviceName = "";
         TrainerControl::onDisconnected();
         startScan();
@@ -269,6 +276,8 @@ bool BTDeviceManager::connectRemoteDevice(NimBLEAdvertisedDevice* remoteDevice) 
         }
       }
     }
+    // discovery and setup finished: the power meter may use the radio now
+    trainerReady = true;
   } else {
     log_e("Connection to BLE device failed, service manager not available");
     nimBLEClient->disconnect();
@@ -283,6 +292,7 @@ bool BTDeviceManager::released = false;
 void BTDeviceManager::release() {
   log_i("Releasing the trainer");
   released = true;
+  trainerReady = false;
   connectTimer.cancel();
   stopScan();
   if ((nimBLEClient != nullptr) && nimBLEClient->isConnected()) {
@@ -299,6 +309,7 @@ void BTDeviceManager::resume() {
 }
 
 bool BTDeviceManager::isReleased() { return released; }
+bool BTDeviceManager::isTrainerReady() { return trainerReady && connected; }
 
 void BTDeviceManager::startScan() {
   if (released) {
@@ -330,6 +341,7 @@ bool BTDeviceManager::doScan(void* argument) {
           nimBLEClient->disconnect();
           connectedDeviceName = "";
           connected = false;
+          trainerReady = false;
         }
       }
       // one static instance; v1 allocated a new one on every scan start and never freed it
@@ -348,17 +360,32 @@ bool BTDeviceManager::doScan(void* argument) {
         return false;
       }
     } else {
-      log_e("BLE scan already running");
-      return false;
+      // someone else is scanning (power meter pairing, diagnostics probe). Up to alpha.10 this
+      // returned false, which removes the timer task: the trainer was then never searched for
+      // again until a reboot. Keep the task and try again on the next interval.
+      log_w("BLE scan already running, trying again later");
+      return true;
     }
   }
   log_e("BLE scan start failed");
   return true;
 }
 
+// NimBLE calls this from whichever task stopped the scan (the NimBLE host task from onResult,
+// or the power meter task inside NimBLEClient::connect). arduino-timer isn't thread safe, so
+// only note it here; update() in the main loop does the follow-up.
 void BTDeviceManager::onScanEnd(NimBLEScanResults scanResults) {
-  log_i("BLE scan finished with %d devices", scannedDevices.size());
-  if (scannedDevices.size() <= 0) {
+  scanEndPending = true;
+}
+
+void BTDeviceManager::handleScanEnd() {
+  size_t count;
+  {
+    std::lock_guard<std::mutex> guard(scannedDevicesMutex);
+    count = scannedDevices.size();
+  }
+  log_i("BLE scan finished with %d devices", (int)count);
+  if (count <= 0) {
     if (!connected) {
       startScan();
     }

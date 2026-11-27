@@ -76,6 +76,7 @@ class TrainerControl {
   // FTMS spin down: returns "" when started, otherwise why not
   static String startSpinDown();
   static void cancelSpinDown();
+  static bool isSpinDownActive();
   struct SpinDownSnapshot {
     const char* state = "idle";  // idle, starting, speed_up, coast, success, failed
     String message;

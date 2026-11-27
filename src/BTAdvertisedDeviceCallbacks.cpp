@@ -24,6 +24,8 @@ void BTAdvertisedDeviceCallbacks::onResult(NimBLEAdvertisedDevice* advertisedDev
     log_d("Adding %s (%s) to device list", advertisedDevice->getAddress().toString().c_str(), advertisedDevice->getName().c_str());
   }
   if (BTDeviceManager::getRemoteDevice() != nullptr) {
-    BTDeviceManager::stopScan();
+    // only stop the radio scan here (NimBLE host task); BTDeviceManager::stopScan() also touches
+    // the timers, which belong to the main loop. The scan-end flag takes it from there.
+    NimBLEDevice::getScan()->stop();
   }
 }

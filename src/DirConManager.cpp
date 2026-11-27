@@ -342,7 +342,8 @@ bool DirConManager::processDirConMessage(DirConMessage *dirConMessage, AsyncClie
       }
       if (characteristic->getService() != nullptr) {
         if (!characteristic->getService()->isInternal()) {
-          if (zwiftProtocolActive && isTrainerControlCharacteristic(characteristic->UUID)) {
+          if ((zwiftProtocolActive || TrainerControl::isSpinDownActive()) && isTrainerControlCharacteristic(characteristic->UUID)) {
+            // (also during a spin down: any control write would end the trainer's procedure)
             // Zwift is driving the trainer through the Zwift service (virtual shifting), a second
             // controller writing grade/power directly would fight with it, so drop this write.
             blockedPassthroughWrites++;

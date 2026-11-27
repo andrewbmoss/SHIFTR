@@ -495,3 +495,34 @@ only the Red bike.
   trainer-initiated request offer *Spindown*; events `spindown`.
 - Not yet tried on the Hammer: the exact speed range and status sequence it sends are logged as
   events on the first run.
+
+## Stability review of alpha.10 and fixes (`alpha.11`)
+
+Trigger: after a cold power-up the bridge needed several RESETs and Zwift didn't see it. Live
+check from the PC once it was up: DirCon port 8080 open, mDNS answered 3/3 with the
+`_wahoo-fitness-tnp` service, no core dump, reset reason power-on, so the bridge was healthy.
+Most likely Zwift was started before the bridge and didn't rediscover it, and the RESETs are the
+GPIO0 cold-boot quirk (alpha.8–10 were all installed over the network, so this was v2's first
+cold start). A code review of everything since v1.6.2 found no boot-time crash or hang path.
+
+Fixed bugs from the review:
+- **Trainer search could stop for good** (B1, inherited, made likelier by v2): `doScan` returned
+  `false` when another scan (power meter pairing, probe) was running, which removes the timer
+  task; the trainer was then never searched for again until a reboot. Now it retries.
+- **Timers touched from other tasks** (B2, inherited): the scan-end callback ran in whichever task
+  stopped the scan (NimBLE host, or the power meter task inside `NimBLEClient::connect`), and the
+  scan callback called `stopScan()`, both changing arduino-timer state, which isn't thread safe.
+  Now the callback sets a flag and the main loop acts on it; `onResult` only stops the radio scan.
+- **Power meter attempts listened continuously** (B3): the default connect scan window (16/16)
+  meant 100 % receive for 5 s per attempt; now 60 ms / 30 ms.
+- **Power meter could connect during the trainer's service discovery** (B4): `connected` is set in
+  the connect callback, before discovery. New `isTrainerReady()` (after `onConnected` and the
+  subscription restore) gates the meter's attempts and pairing scan.
+- **Unlocked String/vector in PowerMeter** (B5): `scanError` and `found` now under `pairingMutex`,
+  no allocation inside the spinlock.
+- **Spindown** (B6): Zwift's pass-through control-point writes are blocked during a spin down in
+  every mode, not only with the Zwift protocol; a "control not permitted" answer to the spin down
+  drops control so it's requested again; an unparsable response is ignored.
+- Not changed (rare, noted): NimBLE's client list is modified by `createClient`/`deleteClient` from
+  different tasks without a lock (B7); the meter's client is now only created after the trainer is
+  ready, which removes the realistic overlap.
