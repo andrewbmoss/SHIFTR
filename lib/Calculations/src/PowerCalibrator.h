@@ -56,6 +56,14 @@ class Calibrator {
   static constexpr double MIN_POWER = 60.0;
   static constexpr double MIN_CADENCE = 50.0;
   static constexpr double MAX_SPEED_STEP_KPH = 0.54;      // 0.15 m/s per second
+  // the first minutes of a ride read differently (11-27: P2M/trainer 1.17 in minute 1, 1.10 in
+  // minute 2, ~1.03 after), so no learning until the rider has been moving this long
+  static constexpr uint32_t WARMUP_SECONDS = 120;
+  static constexpr uint32_t RESTART_AFTER_STOP_SECONDS = 60;  // a stop this long starts a new warm-up
+  static constexpr double MOVING_KPH = 5.0;
+  static constexpr double STOPPED_KPH = 2.0;
+  // the starting factor counts as this many seconds of evidence, so a few odd seconds can't swing it
+  static constexpr uint32_t PRIOR_WEIGHT_SECONDS = 120;
 
   void configure(const Config& config);
   const Config& getConfig() const { return config; }
@@ -74,6 +82,7 @@ class Calibrator {
   double driftPercent() const;    // learned factor vs baseline
   bool driftWarning() const { return warning; }
   uint32_t learnedSeconds() const { return count; }
+  bool warmingUp() const { return movingSeconds < WARMUP_SECONDS; }
   // trainer target that makes the crank-equivalent power equal crankTarget
   double trainerTargetFor(double crankTarget) const;
 
@@ -86,6 +95,8 @@ class Calibrator {
   bool warning = false;
   double speeds[6] = {0, 0, 0, 0, 0, 0};
   uint8_t speedCount = 0;
+  uint32_t movingSeconds = 0;
+  uint32_t stoppedSeconds = 0;
   bool steadySpeed(double speedKph);
 };
 

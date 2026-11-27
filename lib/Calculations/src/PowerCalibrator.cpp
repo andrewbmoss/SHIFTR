@@ -30,6 +30,8 @@ void Calibrator::reset() {
   count = 0;
   warning = false;
   speedCount = 0;
+  movingSeconds = 0;
+  stoppedSeconds = 0;
 }
 
 double Calibrator::baselineFactor() const {
@@ -69,9 +71,19 @@ Output Calibrator::update(const Input& input) {
   bool steady = steadySpeed(input.trainerFresh ? input.trainerSpeedKph : 0);
   double crank = input.meterPower * config.meterScale;
 
+  // warm-up: count seconds of riding; a long stop starts a new warm-up
+  double speed = input.trainerFresh ? input.trainerSpeedKph : 0;
+  if (speed > MOVING_KPH) {
+    if (movingSeconds < WARMUP_SECONDS) movingSeconds++;
+    stoppedSeconds = 0;
+  } else if (speed < STOPPED_KPH) {
+    if (stoppedSeconds < RESTART_AFTER_STOP_SECONDS) stoppedSeconds++;
+    if (stoppedSeconds >= RESTART_AFTER_STOP_SECONDS) movingSeconds = 0;
+  }
+
   // learn from steady pedalling only: the flywheel stores and releases energy when the speed
   // changes, and the two meters average differently
-  bool qualifies = input.trainerFresh && input.meterFresh && steady && (input.meterPower > MIN_POWER) &&
+  bool qualifies = !warmingUp() && input.trainerFresh && input.meterFresh && steady && (input.meterPower > MIN_POWER) &&
                    (input.trainerPower > MIN_POWER) && (input.meterCadence > MIN_CADENCE);
   if (qualifies) {
     if (count == 0) {
@@ -81,8 +93,9 @@ Output Calibrator::update(const Input& input) {
       denominator = input.trainerPower;
     }
     count++;
-    // running mean at first, then an exponential average with the configured time constant
-    double alpha = 1.0 / (double)(count + 1);
+    // running mean at first (the prior counting as PRIOR_WEIGHT_SECONDS of evidence), then an
+    // exponential average with the configured time constant
+    double alpha = 1.0 / (double)(count + 1 + PRIOR_WEIGHT_SECONDS);
     if (alpha < 1.0 / config.learnSeconds) alpha = 1.0 / config.learnSeconds;
     numerator += alpha * (crank - numerator);
     denominator += alpha * (input.trainerPower - denominator);

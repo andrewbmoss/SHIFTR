@@ -520,6 +520,48 @@ void test_calibrator_ignores_unsteady_riding(void) {
   TEST_ASSERT_EQUAL_UINT32(0, calibrator.learnedSeconds());
 }
 
+void test_calibrator_warmup_start_transient(void) {
+  // 11-27: the first two minutes read 10-17 % apart, which raised a false drift warning
+  PowerCal::Calibrator calibrator;
+  calibrator.configure(PowerCal::Config());
+  calibrator.setPriorFactor(1.0123);
+  for (int second = 0; second < 60; second++) calibrator.update(ride(200, 1.0 / 1.17, 1.055));
+  for (int second = 0; second < 59; second++) calibrator.update(ride(200, 1.0 / 1.10, 1.055));
+  TEST_ASSERT_TRUE(calibrator.warmingUp());  // warm-up ends with the 120th second
+  TEST_ASSERT_EQUAL_UINT32(0, calibrator.learnedSeconds());
+  for (int second = 0; second < 600; second++) calibrator.update(ride(200, 1.0 / 1.025, 1.055));
+  TEST_ASSERT_FALSE(calibrator.warmingUp());
+  TEST_ASSERT_FALSE(calibrator.driftWarning());
+  TEST_ASSERT_DOUBLE_WITHIN(0.01, 1.025, calibrator.factor());
+}
+
+void test_calibrator_prior_weight(void) {
+  // a minute of odd readings after the warm-up moves a saved factor only part of the way
+  PowerCal::Calibrator calibrator;
+  calibrator.configure(PowerCal::Config());
+  calibrator.setPriorFactor(1.0123);
+  for (int second = 0; second < (int)PowerCal::Calibrator::WARMUP_SECONDS; second++) calibrator.update(ride(30, 1.0, 1.055));
+  for (int second = 0; second < 60; second++) calibrator.update(ride(200, 1.0 / 1.10, 1.055));
+  TEST_ASSERT_TRUE(calibrator.factor() < 1.045);
+  TEST_ASSERT_TRUE(calibrator.factor() > 1.02);
+}
+
+void test_calibrator_stop_restarts_warmup(void) {
+  PowerCal::Calibrator calibrator;
+  calibrator.configure(PowerCal::Config());
+  for (int second = 0; second < 200; second++) calibrator.update(ride(200, 0.97, 1.055));
+  TEST_ASSERT_FALSE(calibrator.warmingUp());
+  // a 30 s stop (traffic light in Zwift) keeps learning going
+  for (int second = 0; second < 30; second++) calibrator.update(ride(0, 0.97, 1.055, 0));
+  TEST_ASSERT_FALSE(calibrator.warmingUp());
+  // a 60 s stop starts a new warm-up
+  for (int second = 0; second < 60; second++) calibrator.update(ride(0, 0.97, 1.055, 0));
+  TEST_ASSERT_TRUE(calibrator.warmingUp());
+  uint32_t learned = calibrator.learnedSeconds();
+  for (int second = 0; second < 100; second++) calibrator.update(ride(200, 0.97, 1.055));
+  TEST_ASSERT_EQUAL_UINT32(learned, calibrator.learnedSeconds());
+}
+
 void test_calibrator_erg_target(void) {
   PowerCal::Calibrator calibrator;
   calibrator.configure(PowerCal::Config());
@@ -656,6 +698,9 @@ int main(int argc, char** argv) {
   RUN_TEST(test_calibrator_warns_on_drift);
   RUN_TEST(test_calibrator_ignores_unsteady_riding);
   RUN_TEST(test_calibrator_erg_target);
+  RUN_TEST(test_calibrator_warmup_start_transient);
+  RUN_TEST(test_calibrator_prior_weight);
+  RUN_TEST(test_calibrator_stop_restarts_warmup);
   RUN_TEST(test_rewrite_indoor_bike_data);
   RUN_TEST(test_rewrite_cycling_power);
   RUN_TEST(test_cps_full_measurement);

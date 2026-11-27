@@ -526,3 +526,41 @@ Fixed bugs from the review:
 - Not changed (rare, noted): NimBLE's client list is modified by `createClient`/`deleteClient` from
   different tasks without a lock (B7); the meter's client is now only created after the trainer is
   ready, which removes the realistic overlap.
+
+## Ride 2026-11-27 (`alpha.10`, ERG workout) and fixes (`alpha.12`)
+
+Log 14:25–15:27, 3615 samples, no gaps or stalls. ERG held the target: the corrected meter
+(P2M × 1.055) was within ~1 % of the target in the work intervals (e.g. 364 × 1.055 = 384 W
+for 380 W).
+
+**Power meter reconnects.** Connected after 6 tries at start-up. It dropped at 14:28:16 (error 0)
+after the cranks had been still since at least 14:27:30, so the meter went to sleep; it came back
+after 54 tries at 14:33:18, three seconds after Zwift entered the ride (14:33:15), i.e. when the
+cranks moved. A mid-ride drop (error 524, 15:23:24) reconnected on the first try in 8 s. The long
+search was the meter sleeping, not attempts failing. During the 7 minutes of continuous-listen
+searching the trainer's data age was unchanged (p95 919 ms vs 888 ms connected), so full
+listening costs the trainer link little; the case worth protecting is a whole ride without the
+meter (other bike, flat battery).
+
+**Two-stage listening.** Attempts keep the alpha.5 timing (5 s, 0.5 s apart). Each attempt now
+listens all the time (16/16) for the first 90 s of a search and again for 90 s whenever riding
+starts after a stop of 30 s or more (the moment the meter wakes and advertises), and 30 ms of
+every 60 ms otherwise. Events: `listening fully` / `listening half the time`, and the connected
+event says which was used.
+
+**Pairing needed 'Use' three times.** The settings page loaded the meter's state once after
+'Use', so it showed "searching" and still listed the meter with its 'Use' button; each press
+saved the pairing again and made the meter task drop the attempt and start over. Now a repeat
+'Use' for the paired meter changes nothing, the found list is cleared after pairing, the paired
+meter shows "in use", and the page refreshes the state every 2 s (try count, then connected with
+battery and RSSI).
+
+**False drift warning.** "+5.6 %: spindown advised" at 14:38:44, cleared 14:40:23. The meter/
+trainer ratio was 1.17 in the first minute of pedalling and 1.10 in the second, then 0.99–1.06
+for the rest (whole ride 1.024 against the 1.031 baseline, i.e. the trainer was fine). The
+learner started as a plain running mean, so the first 30 s set the factor (1.0123 → 1.13).
+Now: no learning in the first 120 s of riding (a stop of 60 s starts a new warm-up), and the
+starting factor counts as 120 s of evidence. Replaying the 1 Hz logs through a copy of the
+algorithm: 11-27 max drift 2.5 %, no warning (was 5.6 %, warning at 14:38:42, matching the
+bridge's 14:38:44); 11-23 (Quarq bike with the P2M scale) and 11-25 (KICKR) still warn, as they
+should; 11-24 and 11-26 unchanged, no warning. 3 new unit tests.

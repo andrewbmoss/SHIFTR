@@ -3,6 +3,7 @@
 #include <NimBLEDevice.h>
 #include <Preferences.h>
 #include <Telemetry.h>
+#include <TrainerControl.h>
 #include <TrainerProtocol.h>
 
 #include <mutex>
@@ -10,11 +11,21 @@
 
 namespace {
 
-// The Power2Max advertises for only about a minute after it wakes up, so listen almost
-// continuously while searching. Attempts only run while the trainer is connected, so they
-// never hold up the trainer's own reconnect scans.
+// The Power2Max advertises for only about a minute after it wakes up, so attempts follow each
+// other closely. Attempts only run while the trainer is connected, so they never hold up the
+// trainer's own reconnect scans.
 constexpr uint32_t CONNECT_TIMEOUT_S = 5;      // one attempt listens this long for the meter's advertisement
 constexpr uint32_t ATTEMPT_PAUSE_MS = 500;     // between attempts
+// How much of each attempt the radio listens (connect scan interval/window, 0.625 ms units).
+// Full: listen all the time, for the first FULL_LISTEN_MS of a search and again whenever the
+// rider starts riding after a stop (that is when the meter wakes up and advertises). Half: 30 ms
+// of every 60 ms, for a long search (meter asleep or on another bike) so it doesn't take
+// airtime from the trainer for the whole ride.
+constexpr uint32_t FULL_LISTEN_MS = 90000;
+constexpr uint32_t RIDING_RESTART_STOP_MS = 30000;  // a stop this long, then riding: listen fully again
+constexpr uint32_t RIDING_MILLI_MPS = 1400;         // 5 km/h
+constexpr uint16_t SCAN_FULL_INTERVAL = 16, SCAN_FULL_WINDOW = 16;
+constexpr uint16_t SCAN_HALF_INTERVAL = 96, SCAN_HALF_WINDOW = 48;
 constexpr uint32_t RSSI_INTERVAL_MS = 5000;
 constexpr uint32_t BATTERY_INTERVAL_MS = 600000;
 constexpr uint32_t SCAN_SECONDS = 10;
@@ -61,6 +72,8 @@ uint32_t lastCrankAt = 0;
 NimBLEClient* client = nullptr;
 volatile bool disconnectedFlag = false;
 volatile int disconnectReason = 0;
+volatile uint32_t searchTries = 0;
+volatile bool fullListen = true;
 
 std::string clean(const std::string& text) {
   std::string out;
@@ -167,16 +180,18 @@ void runScan() {
   scanRunning = false;
 }
 
-bool connectOnce(const String& address, uint8_t type) {
+bool connectOnce(const String& address, uint8_t type, bool listenFully) {
   if (client == nullptr) {
     client = NimBLEDevice::createClient();
     if (client == nullptr) return false;
     client->setClientCallbacks(&clientCallbacks, false);
-    // the meter sends once a second; a relaxed interval leaves more airtime for the trainer
-    // the last two are the scan interval/window used while connecting (0.625 ms units). The
-    // defaults (16/16) listen continuously, which took airtime from the trainer for 5 s of
-    // every attempt; 60 ms / 30 ms still catches a 1 Hz advertiser within one attempt.
-    client->setConnectionParams(64, 96, 0, 400, 96, 48);
+  }
+  // the meter sends once a second; a relaxed connection interval (80-120 ms) leaves more
+  // airtime for the trainer. The last two are the scan interval/window while connecting.
+  if (listenFully) {
+    client->setConnectionParams(64, 96, 0, 400, SCAN_FULL_INTERVAL, SCAN_FULL_WINDOW);
+  } else {
+    client->setConnectionParams(64, 96, 0, 400, SCAN_HALF_INTERVAL, SCAN_HALF_WINDOW);
   }
   client->setConnectTimeout(CONNECT_TIMEOUT_S);
   radioBusy = true;
@@ -223,7 +238,21 @@ void meterTask(void*) {
   uint32_t lastRssiAt = 0;
   uint32_t lastBatteryAt = 0;
   uint32_t attempts = 0;
+  uint32_t fullListenUntil = 0;
+  uint32_t stoppedSince = 0;   // 0 = riding
   while (true) {
+    // riding starts after a stop: the meter has probably just woken up
+    {
+      uint32_t now = millis();
+      bool riding = BTDeviceManager::isConnected() && (TrainerControl::getMillisSinceLastData() < 3000) &&
+                    (TrainerControl::getSpeedMps() * 1000.0 > RIDING_MILLI_MPS);
+      if (!riding) {
+        if (stoppedSince == 0) stoppedSince = now;
+      } else {
+        if ((stoppedSince != 0) && (now - stoppedSince > RIDING_RESTART_STOP_MS)) fullListenUntil = now + FULL_LISTEN_MS;
+        stoppedSince = 0;
+      }
+    }
     if (scanRequested) {
       scanRequested = false;
       if (!(client != nullptr && client->isConnected())) {
@@ -242,6 +271,7 @@ void meterTask(void*) {
       wasConnected = false;
       announcedSearch = false;
       attempts = 0;
+      searchTries = 0;
     }
     bool connectedNow = (client != nullptr) && client->isConnected();
     if (wasConnected && !connectedNow) {
@@ -250,6 +280,7 @@ void meterTask(void*) {
       wasConnected = false;
       announcedSearch = false;
       attempts = 0;
+      searchTries = 0;
     }
 
     String address, name;
@@ -291,14 +322,22 @@ void meterTask(void*) {
       if (!announcedSearch) {
         Telemetry::eventf(TelemetryEvent::POWER_METER, "searching for %s", name.length() ? name.c_str() : address.c_str());
         announcedSearch = true;
+        fullListenUntil = millis() + FULL_LISTEN_MS;
       }
       if ((lastAttemptAt == 0) || (millis() - lastAttemptAt > ATTEMPT_PAUSE_MS)) {
+        bool listenFully = (int32_t)(fullListenUntil - millis()) > 0;
+        if (listenFully != fullListen) {
+          Telemetry::eventf(TelemetryEvent::POWER_METER, "listening %s (try %lu)", listenFully ? "fully" : "half the time", (unsigned long)(attempts + 1));
+          fullListen = listenFully;
+        }
         attempts++;
-        if (connectOnce(address, type)) {
+        searchTries = attempts;
+        if (connectOnce(address, type, listenFully)) {
           wasConnected = true;
           lastRssiAt = millis();
           lastBatteryAt = millis();
-          Telemetry::eventf(TelemetryEvent::POWER_METER, "connected; tries %lu; battery %d%%", (unsigned long)attempts, battery);
+          Telemetry::eventf(TelemetryEvent::POWER_METER, "connected; tries %lu (listening %s); battery %d%%", (unsigned long)attempts,
+                            listenFully ? "fully" : "half", battery);
           log_i("Power meter %s connected after %lu attempts", address.c_str(), (unsigned long)attempts);
         }
         lastAttemptAt = millis();
@@ -364,6 +403,7 @@ void PowerMeter::handleStatus(WebServer& server) {
   PowerMeterReading reading = getReading();
   String json = "{\"state\": \"" + String(getStateName()) + "\", \"name\": \"" + getName() + "\", \"address\": \"" + getAddress() + "\"";
   json += ", \"battery\": " + String(reading.battery) + ", \"rssi\": " + String(reading.rssi);
+  json += ", \"tries\": " + String((unsigned long)searchTries) + ", \"listen\": \"" + String(fullListen ? "full" : "half") + "\"";
   std::vector<Found> copy;
   String error;
   {
@@ -406,12 +446,24 @@ void PowerMeter::handlePair(WebServer& server) {
   uint8_t type = server.hasArg("type") ? (uint8_t)server.arg("type").toInt() : BLE_ADDR_RANDOM;
   String name = server.arg("name");
   name.replace("\"", "");
+  bool unchanged;
   {
     std::lock_guard<std::mutex> guard(pairingMutex);
-    savePairing(address, type, name);
-    pairedAddress = address;
-    pairedType = type;
-    pairedName = name;
+    // pressing Use again for the meter already in use must not drop a connection in progress
+    unchanged = (address == pairedAddress) && (type == pairedType);
+    if (!unchanged) {
+      savePairing(address, type, name);
+      pairedAddress = address;
+      pairedType = type;
+      pairedName = name;
+    }
+    // the list has done its job; the page shows the paired meter's state from now on
+    found.clear();
+    scanError = "";
+  }
+  if (unchanged) {
+    server.send(200, "application/json", "{\"ok\": true, \"unchanged\": true}");
+    return;
   }
   pairingChanged = true;
   Telemetry::eventf(TelemetryEvent::POWER_METER, "paired %s", name.length() ? name.c_str() : address.c_str());

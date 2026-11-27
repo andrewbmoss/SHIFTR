@@ -133,8 +133,21 @@
         return fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: body || '' }).then(r => r.json());
     }
     function escapeHtml(text) { return String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;'); }
+    function describePowerMeterState(pm) {
+        if (pm.state === 'connected') {
+            let parts = ['connected'];
+            if (pm.battery >= 0) parts.push('battery ' + pm.battery + ' %');
+            if (pm.rssi) parts.push(pm.rssi + ' dBm');
+            return '<b>' + parts.join(' &middot; ') + '</b>';
+        }
+        if (pm.state === 'searching') {
+            return 'connecting' + (pm.tries > 0 ? ' (try ' + pm.tries + (pm.listen === 'half' ? ', listening half the time' : '') + ')' : '')
+                + '. If it doesn\'t connect, spin the cranks backwards to wake the meter.';
+        }
+        return pm.state;
+    }
     function renderPowerMeter(pm) {
-        let current = pm.address ? (escapeHtml(pm.name || 'unnamed') + ' <small>(' + pm.address + ')</small> &middot; ' + pm.state) : 'none';
+        let current = pm.address ? (escapeHtml(pm.name || 'unnamed') + ' <small>(' + pm.address + ')</small> &middot; ' + describePowerMeterState(pm)) : 'none';
         document.getElementById('pm_current').innerHTML = current;
         document.getElementById('pm_forget_btn').style.display = pm.address ? '' : 'none';
         let list = '';
@@ -144,19 +157,18 @@
             list = escapeHtml(pm.scan_error);
         } else if (pm.found.length > 0) {
             for (let f of pm.found) {
-                list += '<div class="form-control"><label>' + escapeHtml(f.name || f.address) + '</label><span>' + f.rssi + ' dBm &nbsp;'
-                    + '<button type="button" class="btn" onclick="pairPowerMeter(\'' + f.address + '\', ' + f.type + ', \'' + escapeHtml(f.name).replace(/'/g, '') + '\')"><label>Use</label></button></span></div>';
+                let action = (f.address === pm.address) ? '<small>in use</small>'
+                    : '<button type="button" class="btn" onclick="pairPowerMeter(\'' + f.address + '\', ' + f.type + ', \'' + escapeHtml(f.name).replace(/'/g, '') + '\')"><label>Use</label></button>';
+                list += '<div class="form-control"><label>' + escapeHtml(f.name || f.address) + '</label><span>' + f.rssi + ' dBm &nbsp;' + action + '</span></div>';
             }
         }
         document.getElementById('pm_found').innerHTML = list;
-        if (!pm.scan_running && pmPolling) {
-            clearInterval(pmPolling);
-            pmPolling = null;
-            document.getElementById('pm_find_btn').disabled = false;
-        }
+        document.getElementById('pm_find_btn').disabled = !!pm.scan_running;
     }
     function loadPowerMeter() {
         fetch('/powermeter', { cache: 'no-store' }).then(r => r.json()).then(renderPowerMeter).catch(() => {});
+        // keep the state live (searching -> connected) while the page is open
+        if (!pmPolling) pmPolling = setInterval(function () { if (!document.hidden) loadPowerMeter(); }, 2000);
     }
     function findPowerMeters() {
         document.getElementById('pm_find_btn').disabled = true;
@@ -167,14 +179,11 @@
                 return;
             }
             document.getElementById('pm_found').innerHTML = 'Searching… (10 s)';
-            pmPolling = setInterval(loadPowerMeter, 1500);
         });
     }
     function pairPowerMeter(address, type, name) {
-        pmPost('/powermeter/pair', 'address=' + encodeURIComponent(address) + '&type=' + type + '&name=' + encodeURIComponent(name)).then(() => {
-            document.getElementById('pm_found').innerHTML = '';
-            loadPowerMeter();
-        });
+        document.getElementById('pm_found').innerHTML = 'Connecting…';
+        pmPost('/powermeter/pair', 'address=' + encodeURIComponent(address) + '&type=' + type + '&name=' + encodeURIComponent(name)).then(loadPowerMeter);
     }
     function pairManual() {
         let address = document.getElementById('pm_address').value.trim();
