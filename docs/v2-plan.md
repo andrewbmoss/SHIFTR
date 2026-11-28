@@ -564,3 +564,27 @@ starting factor counts as 120 s of evidence. Replaying the 1 Hz logs through a c
 algorithm: 11-27 max drift 2.5 %, no warning (was 5.6 %, warning at 14:38:42, matching the
 bridge's 14:38:44); 11-23 (Quarq bike with the P2M scale) and 11-25 (KICKR) still warn, as they
 should; 11-24 and 11-26 unchanged, no warning. 3 new unit tests.
+
+## Ride 2026-11-28 (`alpha.12`, 2 h SIM + virtual shifting) and fix (`alpha.13`)
+
+Logger started ~7 min in; the 4-minute back-fill covers from 05:38, events from 05:31. 7162
+samples, no gaps, one 5.3 s main-loop stall (below). Heap minimum 63 kB, largest block 43 kB.
+
+- **Power meter:** first try at start-up (listening fully). The cranks stopped 06:06:17–06:08:02;
+  the meter slept and dropped at 06:07:34, and reconnected at 06:08:08, 6 s after riding resumed
+  (try 7, listening fully).
+- **Calibration:** no drift warning. Factor 0.993–1.034, whole-ride meter/trainer ratio 1.015
+  (baseline 1.031, drift −1.6 %). Lowest drift −3.7 % in the 10 minutes after the stop, when the
+  ratio dipped to 0.98; cause unknown (meter wake-up or trainer temperature), worth watching.
+- **Trainer reconnect mid-ride:** 06:17:21 at 160 W, back in 6 s, Zwift stayed connected and the
+  meter kept supplying power. The trainer's connection and service discovery run in the main loop
+  (inherited), so the loop paused 5.3 s and Zwift got no updates for that time.
+- **Bug, introduced in alpha.11: trainer connected twice at start-up** (05:31:18 and 05:31:22, no
+  disconnect between). `start()` and `setRemoteDeviceNameFilter()` both call `startScan()` at
+  boot, which added two scan tasks. Up to alpha.10 the second found the scan running and removed
+  itself; since the B1 fix it keeps retrying, so it waited all night, fired once the trainer had
+  been found, started a new scan, and the second scan end scheduled a second connect task that
+  replaced the fresh connection without telling `TrainerControl`. Harmless here (before Zwift
+  connected) but not by design. Fixed: `startScan()` keeps a single scan task, `handleScanEnd()` a
+  single connect task, `doConnect()` never replaces a working connection, and the rescan path in
+  `doScan()` reports the disconnect.

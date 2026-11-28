@@ -318,6 +318,11 @@ void BTDeviceManager::startScan() {
   }
   if (started) {
     connectTimer.cancel();
+    // one scan task only. start() and setRemoteDeviceNameFilter() both call this at boot; the
+    // second task used to find the first one's scan running and, since alpha.11 keeps retrying
+    // in that case, waited until the trainer was found, started another scan and so scheduled
+    // a second connect that replaced the fresh connection (11-28: connected twice in 4 s)
+    scanTimer.cancel();
     scanTimer.every(BLE_SCAN_INTERVAL, BTDeviceManager::doScan);
   } else {
     scanTimer.cancel();
@@ -338,10 +343,13 @@ bool BTDeviceManager::doScan(void* argument) {
       log_i("Starting BLE scan...");
       if (nimBLEClient != nullptr) {
         if (nimBLEClient->isConnected()) {
+          // a scan was asked for while connected (e.g. another trainer chosen): tell the rest
+          // of the bridge, which update() can't do once `connected` is cleared here
           nimBLEClient->disconnect();
           connectedDeviceName = "";
           connected = false;
           trainerReady = false;
+          TrainerControl::onDisconnected();
         }
       }
       // one static instance; v1 allocated a new one on every scan start and never freed it
@@ -391,6 +399,7 @@ void BTDeviceManager::handleScanEnd() {
     }
   } else {
     if (!connected) {
+      connectTimer.cancel();
       connectTimer.every(BLE_CONNECT_INTERVAL, BTDeviceManager::doConnect);
     }
   }
@@ -398,6 +407,11 @@ void BTDeviceManager::handleScanEnd() {
 
 bool BTDeviceManager::doConnect(void* argument) {
   log_i("Starting BLE connection...");
+  if (connected && (nimBLEClient != nullptr) && nimBLEClient->isConnected()) {
+    // already connected (a leftover connect task): never replace a working connection
+    log_w("Trainer already connected, connect task dropped");
+    return false;
+  }
   if (started) {
     statusMessage = "Connecting...";
     if (connectRemoteDevice(getRemoteDevice())) {
